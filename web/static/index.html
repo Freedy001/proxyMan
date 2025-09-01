@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ProxyMan - Network Monitor</title>
+    <style>
+        /* 基础重置和变量定义 */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            /* 背景层次 */
+            --color-background: #1e1e1e;
+            --color-background-elevation-1: #252526;
+            --color-background-elevation-2: #2d2d30;
+            --color-background-elevation-3: #383838;
+
+            /* 文本层次 */
+            --color-foreground: #cccccc;
+            --color-foreground-secondary: #a5a5a5;
+            --color-foreground-disabled: #656565;
+            --color-foreground-accent: #ffffff;
+
+            /* 边框和分割线 */
+            --color-details-hairline: #3c3c3c;
+            --color-border: #464647;
+            --color-border-focus: #007acc;
+
+            /* 状态色彩 */
+            --color-accent: #007acc;
+            --color-error: #f14c4c;
+            --color-warning: #ffb454;
+            --color-success: #89d185;
+            --color-info: #75beff;
+
+            /* 交互状态 */
+            --color-background-hover: rgba(255, 255, 255, 0.04);
+            --color-background-selected: rgba(0, 122, 204, 0.15);
+            --color-background-active: rgba(0, 122, 204, 0.25);
+
+            /* HTTP 状态码色彩 */
+            --color-status-1xx: #a5a5a5;
+            --color-status-2xx: #89d185;
+            --color-status-3xx: #ffb454;
+            --color-status-4xx: #f14c4c;
+            --color-status-5xx: #ff6b6b;
+
+            /* 字体尺寸 */
+            --font-size-small: 11px;
+            --font-size-normal: 12px;
+            --font-size-medium: 13px;
+            --font-size-large: 14px;
+
+            /* 间距 */
+            --spacing-xs: 4px;
+            --spacing-sm: 8px;
+            --spacing-md: 12px;
+            --spacing-lg: 16px;
+            --spacing-xl: 24px;
+
+            /* 阴影 */
+            --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.2);
+            --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.3);
+            --shadow-lg: 0 8px 25px rgba(0, 0, 0, 0.4);
+        }
+
+        body {
+            font-family: '.SFNSText-Regular', 'Helvetica Neue', 'Arial', sans-serif;
+            font-size: var(--font-size-normal);
+            background: var(--color-background);
+            color: var(--color-foreground);
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* 主布局 */
+        .app-container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        /* 头部工具栏 */
+        .toolbar {
+            display: flex;
+            align-items: center;
+            gap: var(--spacing-md);
+            padding: var(--spacing-sm) var(--spacing-lg);
+            background: var(--color-background-elevation-1);
+            border-bottom: 1px solid var(--color-details-hairline);
+            flex-shrink: 0;
+            min-height: 48px;
+        }
+
+        .toolbar-title {
+            font-size: var(--font-size-large);
+            font-weight: 600;
+            color: var(--color-foreground-accent);
+            margin-right: auto;
+        }
+
+        .toolbar-controls {
+            display: flex;
+            align-items: center;
+            gap: var(--spacing-sm);
+        }
+
+        .search-container {
+            position: relative;
+            min-width: 300px;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: var(--spacing-xs) var(--spacing-md);
+            padding-left: 32px;
+            background: var(--color-background);
+            border: 1px solid var(--color-border);
+            border-radius: 4px;
+            color: var(--color-foreground);
+            font-size: var(--font-size-normal);
+            font-family: 'SFMono-Regular', Consolas, monospace;
+            transition: border-color 0.2s ease;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: var(--color-border-focus);
+            box-shadow: 0 0 0 2px rgba(0, 122, 204, 0.2);
+        }
+
+        .search-input::placeholder {
+            color: var(--color-foreground-disabled);
+        }
+
+        .search-icon {
+            position: absolute;
+            left: var(--spacing-sm);
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--color-foreground-secondary);
+            font-size: var(--font-size-normal);
+        }
+
+        .clear-button {
+            background: none;
+            border: none;
+            color: var(--color-foreground-secondary);
+            cursor: pointer;
+            padding: var(--spacing-xs);
+            border-radius: 4px;
+            transition: background-color 0.2s ease;
+        }
+
+        .clear-button:hover {
+            background: var(--color-background-hover);
+        }
+
+        .status-filter {
+            display: flex;
+            gap: var(--spacing-xs);
+        }
+
+        .filter-chip {
+            padding: var(--spacing-xs) var(--spacing-sm);
+            background: var(--color-background-elevation-2);
+            border: 1px solid var(--color-border);
+            border-radius: 12px;
+            font-size: var(--font-size-small);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            user-select: none;
+        }
+
+        .filter-chip:hover {
+            background: var(--color-background-hover);
+        }
+
+        .filter-chip.active {
+            background: var(--color-accent);
+            border-color: var(--color-accent);
+            color: white;
+        }
+
+        /* 主内容区域 */
+        .main-content {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .split-view {
+            display: flex;
+            width: 100%;
+            height: 100%;
+        }
+
+        .split-view-sidebar {
+            width: 60%;
+            min-width: 400px;
+            background: var(--color-background);
+            border-right: 1px solid var(--color-details-hairline);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .split-view-main {
+            flex: 1;
+            min-width: 0;
+            background: var(--color-background-elevation-1);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .split-view-resizer {
+            width: 6px;
+            background: var(--color-details-hairline);
+            cursor: col-resize;
+            flex-shrink: 0;
+            transition: background-color 0.2s ease;
+        }
+
+        .split-view-resizer:hover {
+            background: var(--color-accent);
+        }
+
+        /* 请求列表 */
+        .requests-container {
+            flex: 1;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .requests-header {
+            display: flex;
+            align-items: center;
+            padding: var(--spacing-sm) var(--spacing-lg);
+            background: var(--color-background-elevation-1);
+            border-bottom: 1px solid var(--color-details-hairline);
+            font-size: var(--font-size-small);
+            font-weight: 500;
+            color: var(--color-foreground-secondary);
+        }
+
+        .requests-table {
+            flex: 1;
+            overflow: auto;
+            background: var(--color-background);
+        }
+
+        .request-table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            font-family: 'SFMono-Regular', Consolas, monospace;
+            font-size: var(--font-size-small);
+        }
+
+        .request-table thead th {
+            position: sticky;
+            top: 0;
+            background: var(--color-background-elevation-1);
+            padding: var(--spacing-sm) var(--spacing-md);
+            text-align: left;
+            font-weight: 500;
+            color: var(--color-foreground-secondary);
+            border-bottom: 1px solid var(--color-details-hairline);
+            white-space: nowrap;
+            user-select: none;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+        }
+
+        .request-table thead th:hover {
+            background: var(--color-background-elevation-2);
+        }
+
+        .request-table tbody tr {
+            transition: background-color 0.15s ease;
+            cursor: pointer;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .request-table tbody tr:hover {
+            background: var(--color-background-hover);
+        }
+
+        .request-table tbody tr.selected {
+            background: var(--color-background-selected);
+        }
+
+        .request-table tbody tr.new-request {
+            animation: highlight-new 0.5s ease-out;
+        }
+
+        @keyframes highlight-new {
+            0% {
+                background: rgba(0, 122, 204, 0.3);
+            }
+            100% {
+                background: transparent;
+            }
+        }
+
+        .request-table tbody td {
+            padding: var(--spacing-xs) var(--spacing-md);
+            vertical-align: middle;
+            max-width: 200px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .method-cell {
+            font-weight: 600;
+            text-transform: uppercase;
+            min-width: 60px;
+        }
+
+        .method-get {
+            color: var(--color-info);
+        }
+
+        .method-post {
+            color: var(--color-warning);
+        }
+
+        .method-put {
+            color: var(--color-success);
+        }
+
+        .method-delete {
+            color: var(--color-error);
+        }
+
+        .method-patch {
+            color: var(--color-accent);
+        }
+
+        .status-cell {
+            font-weight: 600;
+            min-width: 60px;
+        }
+
+        .status-1xx {
+            color: var(--color-status-1xx);
+        }
+
+        .status-2xx {
+            color: var(--color-status-2xx);
+        }
+
+        .status-3xx {
+            color: var(--color-status-3xx);
+        }
+
+        .status-4xx {
+            color: var(--color-status-4xx);
+        }
+
+        .status-5xx {
+            color: var(--color-status-5xx);
+        }
+
+        .type-cell {
+            font-size: var(--font-size-small);
+            font-weight: 500;
+            color: var(--color-foreground-secondary);
+            text-transform: uppercase;
+            min-width: 60px;
+        }
+
+        .url-cell {
+            font-family: 'SFMono-Regular', Consolas, monospace;
+            max-width: 300px;
+        }
+
+        .host-cell {
+            color: var(--color-foreground-secondary);
+            font-size: var(--font-size-small);
+        }
+
+        .time-cell {
+            color: var(--color-foreground-secondary);
+            font-size: var(--font-size-small);
+            text-align: right;
+            min-width: 80px;
+        }
+
+        /* 详情面板 */
+        .details-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .details-header {
+            padding: var(--spacing-lg);
+            background: var(--color-background-elevation-2);
+            border-bottom: 1px solid var(--color-details-hairline);
+        }
+
+        .details-title {
+            font-size: var(--font-size-large);
+            font-weight: 600;
+            margin-bottom: var(--spacing-xs);
+        }
+
+        .details-url {
+            font-family: 'SFMono-Regular', Consolas, monospace;
+            color: var(--color-foreground-secondary);
+            word-break: break-all;
+        }
+
+        .details-tabs {
+            display: flex;
+            background: var(--color-background-elevation-1);
+            border-bottom: 1px solid var(--color-details-hairline);
+        }
+
+        .details-tab {
+            padding: var(--spacing-md) var(--spacing-lg);
+            background: none;
+            border: none;
+            color: var(--color-foreground-secondary);
+            font-size: var(--font-size-normal);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            position: relative;
+        }
+
+        .details-tab:hover {
+            color: var(--color-foreground);
+            background: var(--color-background-hover);
+        }
+
+        .details-tab.active {
+            color: var(--color-accent);
+        }
+
+        .details-tab.active::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: var(--color-accent);
+        }
+
+        .details-content {
+            flex: 1;
+            overflow: auto;
+            padding: var(--spacing-lg);
+        }
+
+        .details-section {
+            margin-bottom: var(--spacing-xl);
+        }
+
+        .details-section-title {
+            font-size: var(--font-size-medium);
+            font-weight: 600;
+            margin-bottom: var(--spacing-md);
+            color: var(--color-foreground);
+        }
+
+        .json-viewer {
+            background: var(--color-background);
+            border: 1px solid var(--color-border);
+            border-radius: 4px;
+            font-family: 'SFMono-Regular', Consolas, monospace;
+            font-size: var(--font-size-small);
+            line-height: 1.5;
+            max-height: 400px;
+            overflow: auto;
+        }
+
+        .json-content {
+            padding: var(--spacing-md);
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .json-key {
+            color: var(--color-info);
+        }
+
+        .json-string {
+            color: var(--color-success);
+        }
+
+        .json-number {
+            color: var(--color-warning);
+        }
+
+        .json-boolean {
+            color: var(--color-accent);
+        }
+
+        .json-null {
+            color: var(--color-foreground-disabled);
+        }
+
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: var(--color-foreground-secondary);
+            text-align: center;
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: var(--spacing-lg);
+            opacity: 0.5;
+        }
+
+        .empty-state-title {
+            font-size: var(--font-size-large);
+            margin-bottom: var(--spacing-sm);
+        }
+
+        .empty-state-description {
+            font-size: var(--font-size-normal);
+            color: var(--color-foreground-disabled);
+        }
+
+        /* 搜索高亮 */
+        .search-highlight {
+            background: rgba(255, 180, 84, 0.3);
+            color: var(--color-foreground-accent);
+            border-radius: 2px;
+            padding: 1px 2px;
+        }
+
+        /* 响应式设计 */
+        @media (max-width: 768px) {
+            .split-view {
+                flex-direction: column;
+            }
+
+            .split-view-sidebar {
+                width: 100%;
+                height: 50%;
+                border-right: none;
+                border-bottom: 1px solid var(--color-details-hairline);
+            }
+
+            .split-view-resizer {
+                width: 100%;
+                height: 6px;
+                cursor: row-resize;
+            }
+
+            .toolbar {
+                flex-wrap: wrap;
+                min-height: auto;
+            }
+
+            .search-container {
+                min-width: 200px;
+                order: 1;
+                width: 100%;
+            }
+
+            .toolbar-controls {
+                order: 2;
+                width: 100%;
+                justify-content: space-between;
+                margin-top: var(--spacing-sm);
+            }
+        }
+
+        /* 滚动条样式 */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--color-background);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--color-border);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--color-foreground-disabled);
+        }
+
+        /* 连接状态指示器 */
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: var(--spacing-xs);
+            font-size: var(--font-size-small);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--color-error);
+            transition: background-color 0.3s ease;
+        }
+
+        .status-dot.connected {
+            background: var(--color-success);
+        }
+
+        .status-dot.connecting {
+            background: var(--color-warning);
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.5;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="app-container">
+    <!-- 工具栏 -->
+    <div class="toolbar">
+        <div class="toolbar-title">ProxyMan</div>
+        <div class="toolbar-controls">
+            <div class="search-container">
+                <span class="search-icon">🔍</span>
+                <input type="text" class="search-input" id="searchInput"
+                       placeholder="Search requests... (method:GET, status:200, domain:example.com)">
+            </div>
+            <div class="status-filter">
+                <div class="filter-chip active" data-filter="all">All</div>
+                <div class="filter-chip" data-filter="2xx">2xx</div>
+                <div class="filter-chip" data-filter="3xx">3xx</div>
+                <div class="filter-chip" data-filter="4xx">4xx</div>
+                <div class="filter-chip" data-filter="5xx">5xx</div>
+            </div>
+            <div class="status-filter">
+                <div class="filter-chip active" data-content-filter="all">All Types</div>
+                <div class="filter-chip" data-content-filter="json">JSON</div>
+                <div class="filter-chip" data-content-filter="html">HTML</div>
+                <div class="filter-chip" data-content-filter="image">Image</div>
+                <div class="filter-chip" data-content-filter="css">CSS</div>
+                <div class="filter-chip" data-content-filter="js">JS</div>
+            </div>
+            <button class="clear-button" id="clearRequests" title="Clear all requests">🗑️</button>
+            <div class="connection-status">
+                <span class="status-dot" id="connectionStatus"></span>
+                <span id="connectionText">Disconnected</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 主内容区域 -->
+    <div class="main-content">
+        <div class="split-view">
+            <!-- 请求列表侧边栏 -->
+            <div class="split-view-sidebar">
+                <div class="requests-container">
+                    <div class="requests-header">
+                        <span id="requestCount">0 requests</span>
+                    </div>
+                    <div class="requests-table">
+                        <table class="request-table">
+                            <thead>
+                            <tr>
+                                <th data-sort="method">Method</th>
+                                <th data-sort="status">Status</th>
+                                <th data-sort="contentType">Type</th>
+                                <th data-sort="host">Host</th>
+                                <th data-sort="url">URL</th>
+                                <th data-sort="time">Time</th>
+                            </tr>
+                            </thead>
+                            <tbody id="requestsTableBody">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 分割器 -->
+            <div class="split-view-resizer" id="resizer"></div>
+
+            <!-- 详情面板 -->
+            <div class="split-view-main">
+                <div class="details-panel">
+                    <div id="emptyState" class="empty-state">
+                        <div class="empty-state-icon">📊</div>
+                        <div class="empty-state-title">Select a request</div>
+                        <div class="empty-state-description">
+                            Choose a request from the list to view detailed information
+                        </div>
+                    </div>
+
+                    <div id="detailsContent" class="details-content" style="display: none;">
+                        <div class="details-header">
+                            <div class="details-title" id="detailsTitle">Request Details</div>
+                            <div class="details-url" id="detailsUrl"></div>
+                        </div>
+
+                        <div class="details-tabs">
+                            <button class="details-tab active" data-tab="summary">Summary</button>
+                            <button class="details-tab" data-tab="headers">Headers</button>
+                            <button class="details-tab" data-tab="request">Request</button>
+                            <button class="details-tab" data-tab="response">Response</button>
+                            <button class="details-tab" data-tab="timing">Timing</button>
+                        </div>
+
+                        <div class="details-content">
+                            <div id="summaryTab" class="tab-content">
+                                <div class="details-section">
+                                    <div class="details-section-title">Request Summary</div>
+                                    <div class="json-viewer">
+                                        <pre class="json-content" id="requestSummary">Loading request data...</pre>
+                                    </div>
+                                </div>
+                                <div class="details-section">
+                                    <div class="details-section-title">Response Summary</div>
+                                    <div class="json-viewer">
+                                        <pre class="json-content" id="responseSummary">Loading response data...</pre>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div id="headersTab" class="tab-content" style="display: none;">
+                                <div class="details-section">
+                                    <div class="details-section-title">Request Headers</div>
+                                    <div class="json-viewer">
+                                        <pre class="json-content" id="requestHeaders"></pre>
+                                    </div>
+                                </div>
+                                <div class="details-section">
+                                    <div class="details-section-title">Response Headers</div>
+                                    <div class="json-viewer">
+                                        <pre class="json-content" id="responseHeaders"></pre>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div id="requestTab" class="tab-content" style="display: none;">
+                                <div class="details-section">
+                                    <div class="details-section-title">Raw Request Body</div>
+                                    <div class="json-viewer">
+                                        <pre class="json-content" id="rawRequestBody">No request body</pre>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div id="responseTab" class="tab-content" style="display: none;">
+                                <div class="details-section">
+                                    <div class="details-section-title">Raw Response Body</div>
+                                    <div class="json-viewer">
+                                        <pre class="json-content" id="rawResponseBody">No response body</pre>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div id="timingTab" class="tab-content" style="display: none;">
+                                <div class="details-section">
+                                    <div class="details-section-title">Request Timing</div>
+                                    <div class="json-viewer">
+                                        <pre class="json-content" id="timingInfo">Timing information not available</pre>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>
