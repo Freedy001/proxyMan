@@ -29,21 +29,14 @@
       </div>
 
       <div class="details-body">
-        <!-- Debug info -->
-        <div style="background: #2d2d2d; padding: 10px; margin-bottom: 10px; font-size: 12px; color: #888;">
-          Debug: isLoading={{ requestDetails.isLoading }}, error={{ requestDetails.error }}, 
-          hasRequestHeaders={{ Object.keys(requestDetails.requestHeaders).length > 0 }},
-          hasResponseHeaders={{ Object.keys(requestDetails.responseHeaders).length > 0 }}
-        </div>
-        
-        <div v-if="requestDetails.isLoading" class="loading-state">
+        <div v-if="requestDetails.isLoading.value" class="loading-state">
           <div class="loading-spinner"></div>
           <div>Loading request data...</div>
         </div>
 
-        <div v-else-if="requestDetails.error" class="error-state">
+        <div v-else-if="requestDetails.error.value" class="error-state">
           <div class="error-icon">⚠️</div>
-          <div class="error-message">{{ requestDetails.error }}</div>
+          <div class="error-message">{{ requestDetails.error.value }}</div>
         </div>
 
         <div v-else class="tab-content">
@@ -56,10 +49,10 @@
               </div>
             </div>
             
-            <div v-if="requestDetails.metadata" class="details-section">
+            <div v-if="requestDetails.metadata.value" class="details-section">
               <div class="details-section-title">Response Summary</div>
               <div class="json-viewer">
-                <pre class="json-content">{{ requestDetails.formatJson(requestDetails.metadata) }}</pre>
+                <pre class="json-content">{{ requestDetails.formatJson(requestDetails.metadata.value) }}</pre>
               </div>
             </div>
           </div>
@@ -70,8 +63,8 @@
               <div class="details-section-title">Request Headers</div>
               <div class="json-viewer">
                 <pre class="json-content">{{ 
-                  Object.keys(requestDetails.requestHeaders).length > 0 
-                    ? requestDetails.formatJson(requestDetails.requestHeaders) 
+                  Object.keys(requestDetails.requestHeaders.value).length > 0 
+                    ? requestDetails.formatJson(requestDetails.requestHeaders.value) 
                     : 'No request headers available' 
                 }}</pre>
               </div>
@@ -81,8 +74,8 @@
               <div class="details-section-title">Response Headers</div>
               <div class="json-viewer">
                 <pre class="json-content">{{ 
-                  Object.keys(requestDetails.responseHeaders).length > 0 
-                    ? requestDetails.formatJson(requestDetails.responseHeaders) 
+                  Object.keys(requestDetails.responseHeaders.value).length > 0 
+                    ? requestDetails.formatJson(requestDetails.responseHeaders.value) 
                     : 'No response headers available' 
                 }}</pre>
               </div>
@@ -95,7 +88,7 @@
               <div class="details-section-title">Raw Request Body</div>
               <div class="json-viewer">
                 <pre class="json-content">{{ 
-                  requestDetails.requestBody || 'No request body'
+                  requestDetails.requestBody.value || 'No request body'
                 }}</pre>
               </div>
             </div>
@@ -129,7 +122,7 @@
 </template>
 
 <script setup>
-import { ref, watch, watchEffect } from 'vue'
+import { ref, watch } from 'vue'
 import { useRequestsStore } from '../stores/requests'
 import { useRequestDetails } from '../composables/useRequestDetails'
 
@@ -137,14 +130,6 @@ const requestsStore = useRequestsStore()
 const requestDetails = useRequestDetails()
 
 const activeTab = ref('summary')
-
-// Debug reactive state changes
-watchEffect(() => {
-  console.log('RequestDetails component - isLoading changed:', requestDetails.isLoading.value)
-  console.log('RequestDetails component - error:', requestDetails.error.value)
-  console.log('RequestDetails component - requestHeaders keys:', Object.keys(requestDetails.requestHeaders.value))
-  console.log('RequestDetails component - responseHeaders keys:', Object.keys(requestDetails.responseHeaders.value))
-})
 
 const tabs = [
   { key: 'summary', label: 'Summary' },
@@ -183,7 +168,7 @@ const formatRequestSummary = () => {
 }
 
 const formatResponseBody = () => {
-  const body = requestDetails.responseBody
+  const body = requestDetails.responseBody.value
   const contentType = requestsStore.selectedRequest?.contentType
   
   if (!body) return 'No response body'
