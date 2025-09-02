@@ -17,5 +17,14 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: true
+  },
+  define: {
+    global: 'globalThis'
+  },
+  optimizeDeps: {
+    include: ['monaco-editor']
+  },
+  worker: {
+    format: 'es'
   }
 })

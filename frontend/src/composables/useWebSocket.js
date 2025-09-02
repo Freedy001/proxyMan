@@ -1,4 +1,4 @@
-import { ref, onUnmounted } from 'vue'
+import {onUnmounted, ref} from 'vue'
 
 export function useWebSocket() {
   const isConnected = ref(false)
@@ -31,10 +31,7 @@ export function useWebSocket() {
 
       ws.onmessage = (event) => {
         try {
-          console.log('WebSocket raw message received:', event.data)
-          const data = JSON.parse(event.data)
-          console.log('WebSocket parsed data:', data)
-          onMessage(data)
+          onMessage(JSON.parse(event.data))
         } catch (err) {
           console.error('Failed to parse WebSocket message:', err)
           if (onError) onError(err)

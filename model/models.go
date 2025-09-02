@@ -30,8 +30,8 @@ const (
 type RequestSummary struct {
 	//基础数据
 	ID        int64         `json:"id"`
-	StartTime time.Time     `json:"startTime"`
-	EndTime   time.Time     `json:"endTime"`
+	StartTime *time.Time    `json:"startTime"`
+	EndTime   *time.Time    `json:"endTime"`
 	Status    RequestStatus `json:"status"`
 	//请求数据
 	Method string `json:"method"`

@@ -1,17 +1,17 @@
-import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
-import { useWebSocket } from '../composables/useWebSocket'
-import { useRequestFiltering } from '../composables/useRequestFiltering'
+import {defineStore} from 'pinia'
+import {computed, ref} from 'vue'
+import {useWebSocket} from '../composables/useWebSocket'
+import {useRequestFiltering} from '../composables/useRequestFiltering'
 
 export const useRequestsStore = defineStore('requests', () => {
   const requests = ref([])
   const selectedRequestId = ref(null)
   const sortColumn = ref('id')
   const sortOrder = ref('desc')
-  
-  const { 
-    isConnected, 
-    isConnecting, 
+
+  const {
+    isConnected,
+    isConnecting,
     error: connectionError,
     connect: connectWS,
     disconnect: disconnectWS
@@ -33,18 +33,16 @@ export const useRequestsStore = defineStore('requests', () => {
   })
 
   const sortedAndFilteredRequests = computed(() => {
-    const sorted = [...filteredRequests.value].sort((a, b) => {
+    return [...filteredRequests.value].sort((a, b) => {
       const aVal = a[sortColumn.value]
       const bVal = b[sortColumn.value]
-      
+
       let comparison = 0
       if (aVal < bVal) comparison = -1
       if (aVal > bVal) comparison = 1
-      
+
       return sortOrder.value === 'asc' ? comparison : -comparison
     })
-    
-    return sorted
   })
 
   const requestCount = computed(() => requests.value.length)
@@ -60,10 +58,13 @@ export const useRequestsStore = defineStore('requests', () => {
 
   const handleRequestSummary = (summary) => {
     const existingIndex = requests.value.findIndex(req => req.id === summary.id)
-    
+
     if (existingIndex >= 0) {
       // Update existing request
-      requests.value[existingIndex] = { ...requests.value[existingIndex], ...summary }
+      requests.value[existingIndex] = {
+        ...requests.value[existingIndex], ...summary,
+        duration: calculateDuration(summary.startTime, summary.endTime)
+      }
     } else {
       // Add new request
       requests.value.unshift({
@@ -72,7 +73,7 @@ export const useRequestsStore = defineStore('requests', () => {
         duration: calculateDuration(summary.startTime, summary.endTime),
         isNew: true
       })
-      
+
       // Remove "new" flag after animation
       setTimeout(() => {
         const newIndex = requests.value.findIndex(req => req.id === summary.id)
@@ -89,12 +90,12 @@ export const useRequestsStore = defineStore('requests', () => {
 
   const calculateDuration = (startTime, endTime) => {
     if (!startTime || !endTime) return null
-    
+
     try {
       const start = new Date(startTime)
       const end = new Date(endTime)
       const duration = end - start
-      
+
       if (duration < 1000) {
         return `${duration}ms`
       } else {
@@ -125,40 +126,46 @@ export const useRequestsStore = defineStore('requests', () => {
 
   const getStatusClass = (statusCode) => {
     if (!statusCode) return ''
-    
+
     if (statusCode >= 100 && statusCode < 200) return 'status-1xx'
     if (statusCode >= 200 && statusCode < 300) return 'status-2xx'
     if (statusCode >= 300 && statusCode < 400) return 'status-3xx'
     if (statusCode >= 400 && statusCode < 500) return 'status-4xx'
     if (statusCode >= 500) return 'status-5xx'
-    
+
     return ''
   }
 
   const getMethodClass = (method) => {
     switch (method?.toUpperCase()) {
-      case 'GET': return 'method-get'
-      case 'POST': return 'method-post'
-      case 'PUT': return 'method-put'
-      case 'DELETE': return 'method-delete'
-      case 'PATCH': return 'method-patch'
-      default: return ''
+      case 'GET':
+        return 'method-get'
+      case 'POST':
+        return 'method-post'
+      case 'PUT':
+        return 'method-put'
+      case 'DELETE':
+        return 'method-delete'
+      case 'PATCH':
+        return 'method-patch'
+      default:
+        return ''
     }
   }
 
   const formatContentType = (contentType) => {
     if (!contentType) return ''
-    
+
     const type = contentType.split('/')[1]?.split(';')[0]
     return type?.toUpperCase() || contentType.split('/')[0]?.toUpperCase() || 'UNKNOWN'
   }
 
   const formatTime = (timestamp) => {
     if (!timestamp) return ''
-    
+
     try {
       const date = new Date(timestamp)
-      return date.toLocaleTimeString('en-US', { 
+      return date.toLocaleTimeString('en-US', {
         hour12: false,
         hour: '2-digit',
         minute: '2-digit',
@@ -175,7 +182,7 @@ export const useRequestsStore = defineStore('requests', () => {
     selectedRequestId,
     sortColumn,
     sortOrder,
-    
+
     // Computed
     selectedRequest,
     sortedAndFilteredRequests,
@@ -183,7 +190,7 @@ export const useRequestsStore = defineStore('requests', () => {
     isConnected,
     isConnecting,
     connectionError,
-    
+
     // Filtering
     searchQuery,
     statusFilter,
@@ -192,14 +199,14 @@ export const useRequestsStore = defineStore('requests', () => {
     setStatusFilter,
     setContentTypeFilter,
     clearFilters,
-    
+
     // Actions
     connect,
     disconnect,
     selectRequest,
     clearRequests,
     setSorting,
-    
+
     // Utilities
     getStatusClass,
     getMethodClass,

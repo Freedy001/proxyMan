@@ -56,7 +56,7 @@
             </td>
             
             <td class="time-cell">
-              {{ request.duration || requestsStore.formatTime(request.startTime) }}
+              {{ request.duration || 'pending' }}
             </td>
           </tr>
         </tbody>

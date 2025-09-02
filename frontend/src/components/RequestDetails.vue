@@ -17,12 +17,12 @@
       </div>
 
       <div class="details-tabs">
-        <button 
-          v-for="tab in tabs"
-          :key="tab.key"
-          class="details-tab"
-          :class="{ active: activeTab === tab.key }"
-          @click="activeTab = tab.key"
+        <button
+            v-for="tab in tabs"
+            :key="tab.key"
+            class="details-tab"
+            :class="{ active: activeTab === tab.key }"
+            @click="activeTab = tab.key"
         >
           {{ tab.label }}
         </button>
@@ -44,77 +44,98 @@
           <div v-if="activeTab === 'summary'" class="tab-pane">
             <div class="details-section">
               <div class="details-section-title">Request Summary</div>
-              <div class="json-viewer">
-                <pre class="json-content">{{ formatRequestSummary() }}</pre>
-              </div>
-            </div>
-            
-            <div v-if="requestDetails.metadata.value" class="details-section">
-              <div class="details-section-title">Response Summary</div>
-              <div class="json-viewer">
-                <pre class="json-content">{{ requestDetails.formatJson(requestDetails.metadata.value) }}</pre>
+              <div class="summary-table-container">
+                <table class="summary-table">
+                  <tbody>
+                  <tr v-for="item in getSummaryData()" :key="item.name" class="summary-row">
+                    <td class="summary-name">{{ item.name }}</td>
+                    <td class="summary-value" :class="item.valueClass">{{ item.value }}</td>
+                  </tr>
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>
 
-          <!-- Headers Tab -->
+          <!-- Request Headers Tab -->
           <div v-if="activeTab === 'headers'" class="tab-pane">
             <div class="details-section">
               <div class="details-section-title">Request Headers</div>
-              <div class="json-viewer">
-                <pre class="json-content">{{ 
-                  Object.keys(requestDetails.requestHeaders.value).length > 0 
-                    ? requestDetails.formatJson(requestDetails.requestHeaders.value) 
-                    : 'No request headers available' 
-                }}</pre>
+              <div v-if="Object.keys(requestDetails.requestHeaders.value).length > 0" class="headers-table-container">
+                <table class="headers-table">
+                  <thead>
+                  <tr>
+                    <th class="header-name-col">Name</th>
+                    <th class="header-value-col">Value</th>
+                  </tr>
+                  </thead>
+                  <tbody>
+                  <tr v-for="(value, name) in requestDetails.requestHeaders.value" :key="name" class="header-row">
+                    <td class="header-name">{{ name }}</td>
+                    <td class="header-value">{{ formatHeaderValue(value) }}</td>
+                  </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div v-else class="empty-headers">
+                No request headers available
               </div>
             </div>
-            
+
+            <!-- Response Headers Tab -->
             <div class="details-section">
               <div class="details-section-title">Response Headers</div>
-              <div class="json-viewer">
-                <pre class="json-content">{{ 
-                  Object.keys(requestDetails.responseHeaders.value).length > 0 
-                    ? requestDetails.formatJson(requestDetails.responseHeaders.value) 
-                    : 'No response headers available' 
-                }}</pre>
+              <div v-if="Object.keys(requestDetails.responseHeaders.value).length > 0" class="headers-table-container">
+                <table class="headers-table">
+                  <thead>
+                  <tr>
+                    <th class="header-name-col">Name</th>
+                    <th class="header-value-col">Value</th>
+                  </tr>
+                  </thead>
+                  <tbody>
+                  <tr v-for="(value, name) in requestDetails.responseHeaders.value" :key="name" class="header-row">
+                    <td class="header-name">{{ name }}</td>
+                    <td class="header-value">{{ formatHeaderValue(value) }}</td>
+                  </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div v-else class="empty-headers">
+                No response headers available
               </div>
             </div>
           </div>
 
-          <!-- Request Tab -->
+          <!-- Request Body Tab -->
           <div v-if="activeTab === 'request'" class="tab-pane">
             <div class="details-section">
-              <div class="details-section-title">Raw Request Body</div>
-              <div class="json-viewer">
-                <pre class="json-content">{{ 
-                  requestDetails.requestBody.value || 'No request body'
-                }}</pre>
-              </div>
+              <BodyViewer
+                  :body="requestDetails.requestBody.value"
+                  :headers="requestDetails.requestHeaders.value"
+                  :view-mode="requestViewMode"
+                  :auto-scroll="true"
+                  label="Request Body"
+                  @update:view-mode="requestViewMode = $event"
+              />
             </div>
           </div>
 
-          <!-- Response Tab -->
+          <!-- Response Body Tab -->
           <div v-if="activeTab === 'response'" class="tab-pane">
             <div class="details-section">
-              <div class="details-section-title">Raw Response Body</div>
-              <div class="json-viewer">
-                <pre class="json-content">{{ 
-                  formatResponseBody()
-                }}</pre>
-              </div>
+              <BodyViewer
+                  :body="requestDetails.responseBody.value"
+                  :headers="requestDetails.responseHeaders.value"
+                  :requestState="requestDetails.requestState.value"
+                  :view-mode="responseViewMode"
+                  :auto-scroll="false"
+                  label="Response Body"
+                  @update:view-mode="responseViewMode = $event"
+              />
             </div>
           </div>
 
-          <!-- Timing Tab -->
-          <div v-if="activeTab === 'timing'" class="tab-pane">
-            <div class="details-section">
-              <div class="details-section-title">Request Timing</div>
-              <div class="json-viewer">
-                <pre class="json-content">{{ formatTimingInfo() }}</pre>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
     </div>
@@ -122,21 +143,23 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
-import { useRequestsStore } from '../stores/requests'
-import { useRequestDetails } from '../composables/useRequestDetails'
+import {ref, watch} from 'vue'
+import {useRequestsStore} from '../stores/requests'
+import {useRequestDetails} from '../composables/useRequestDetails'
+import BodyViewer from './BodyViewer.vue'
 
 const requestsStore = useRequestsStore()
 const requestDetails = useRequestDetails()
 
 const activeTab = ref('summary')
+const requestViewMode = ref('raw')
+const responseViewMode = ref('raw')
 
 const tabs = [
-  { key: 'summary', label: 'Summary' },
-  { key: 'headers', label: 'Headers' },
-  { key: 'request', label: 'Request' },
-  { key: 'response', label: 'Response' },
-  { key: 'timing', label: 'Timing' }
+  {key: 'summary', label: 'Summary'},
+  {key: 'headers', label: 'Headers'},
+  {key: 'request', label: 'Request'},
+  {key: 'response', label: 'Response'}
 ]
 
 // Watch for selected request changes
@@ -148,67 +171,94 @@ watch(() => requestsStore.selectedRequestId, (newId, oldId) => {
   } else if (!newId) {
     requestDetails.clearDetails()
   }
-}, { immediate: true })
+}, {immediate: true})
 
-const formatRequestSummary = () => {
+const getSummaryData = () => {
   const request = requestsStore.selectedRequest
-  if (!request) return 'No request selected'
+  if (!request) return []
 
-  return requestDetails.formatJson({
-    id: request.id,
-    method: request.method,
-    url: request.url,
-    host: request.host,
-    startTime: request.startTime,
-    endTime: request.endTime,
-    status: request.status,
-    contentType: request.contentType,
-    statusCode: request.statusCode
-  })
-}
-
-const formatResponseBody = () => {
-  const body = requestDetails.responseBody.value
-  const contentType = requestsStore.selectedRequest?.contentType
-  
-  if (!body) return 'No response body'
-  
-  return requestDetails.formatBody(body, contentType)
-}
-
-const formatTimingInfo = () => {
-  const request = requestsStore.selectedRequest
-  if (!request) return 'No timing information available'
-
-  const timing = {
-    startTime: request.startTime,
-    endTime: request.endTime,
-    status: request.status,
-    duration: calculateDuration(request.startTime, request.endTime)
-  }
-
-  return requestDetails.formatJson(timing)
-}
-
-const calculateDuration = (startTime, endTime) => {
-  if (!startTime || !endTime) return 'N/A'
-  
-  try {
-    const start = new Date(startTime)
-    const end = new Date(endTime)
-    const duration = end - start
-    
-    if (duration < 1000) {
-      return `${duration}ms`
-    } else {
-      return `${(duration / 1000).toFixed(2)}s`
+  const summaryItems = [
+    {
+      name: 'Request ID',
+      value: request.id || 'N/A',
+      valueClass: 'value-monospace'
+    },
+    {
+      name: 'Method',
+      value: request.method || 'N/A',
+      valueClass: `value-method ${requestsStore.getMethodClass(request.method)}`
+    },
+    {
+      name: 'URL',
+      value: request.url || 'N/A',
+      valueClass: 'value-url'
+    },
+    {
+      name: 'Host',
+      value: request.host || 'N/A',
+      valueClass: 'value-monospace'
+    },
+    {
+      name: 'Status',
+      value: request.status || 'Pending',
+      valueClass: 'value-normal'
     }
-  } catch (e) {
-    return 'N/A'
+  ]
+
+  // Status information
+  if (request.statusCode) {
+    summaryItems.push({
+      name: 'Status Code',
+      value: request.statusCode,
+      valueClass: `value-status ${requestsStore.getStatusClass(request.statusCode)}`
+    })
   }
+
+  // Content type
+  if (request.contentType) {
+    summaryItems.push({
+      name: 'Content Type',
+      value: request.contentType,
+      valueClass: 'value-monospace'
+    })
+  }
+
+  // Timing information
+  if (request.startTime) {
+    summaryItems.push({
+      name: 'Start Time',
+      value: new Date(request.startTime).toLocaleString(),
+      valueClass: 'value-normal'
+    })
+  }
+
+  if (request.endTime) {
+    summaryItems.push({
+      name: 'End Time',
+      value: new Date(request.endTime).toLocaleString(),
+      valueClass: 'value-normal'
+    })
+  }
+
+  if (request.duration) {
+    summaryItems.push({
+      name: 'Duration',
+      value: request.duration,
+      valueClass: 'value-duration'
+    })
+  }
+  return summaryItems
+}
+
+const formatHeaderValue = (value) => {
+  if (Array.isArray(value)) {
+    return value.join(', ')
+  }
+  return String(value)
 }
 </script>
 
+<!--suppress CssUnusedSymbol -->
 <style scoped>
 .details-panel {
   flex: 1;
@@ -253,6 +303,9 @@ const calculateDuration = (startTime, endTime) => {
   padding: var(--spacing-lg);
   background: var(--color-background-elevation-2);
   border-bottom: 1px solid var(--color-details-hairline);
+  flex-shrink: 0;
+  max-height: 100px;
+  overflow-y: auto;
 }
 
 .details-title {
@@ -266,12 +319,17 @@ const calculateDuration = (startTime, endTime) => {
   color: var(--color-foreground-secondary);
   word-break: break-all;
   font-size: var(--font-size-small);
+  line-height: 1.4;
+  max-height: 2.8em;
+  overflow-y: auto;
+  padding: 2px 0;
 }
 
 .details-tabs {
   display: flex;
   background: var(--color-background-elevation-1);
   border-bottom: 1px solid var(--color-details-hairline);
+  flex-shrink: 0;
 }
 
 .details-tab {
@@ -306,8 +364,9 @@ const calculateDuration = (startTime, endTime) => {
 
 .details-body {
   flex: 1;
-  overflow: auto;
-  padding: var(--spacing-lg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .loading-state,
@@ -332,8 +391,12 @@ const calculateDuration = (startTime, endTime) => {
 }
 
 @keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 .error-icon {
@@ -345,17 +408,36 @@ const calculateDuration = (startTime, endTime) => {
   color: var(--color-error);
 }
 
+.tab-content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
 .tab-pane {
   animation: fadeIn 0.2s ease-in;
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: var(--spacing-lg);
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .details-section {
-  margin-bottom: var(--spacing-xl);
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .details-section-title {
@@ -381,5 +463,189 @@ const calculateDuration = (startTime, endTime) => {
   white-space: pre-wrap;
   word-wrap: break-word;
   margin: 0;
+}
+
+/* Summary table styles */
+.summary-table-container {
+  background: var(--color-background);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.summary-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-small);
+}
+
+.summary-row {
+  border-bottom: 1px solid var(--color-details-hairline);
+}
+
+.summary-row:hover {
+  background: var(--color-background-hover);
+}
+
+.summary-row:last-child {
+  border-bottom: none;
+}
+
+.summary-name {
+  padding: var(--spacing-sm) var(--spacing-md);
+  color: var(--color-info);
+  font-weight: 500;
+  vertical-align: top;
+  word-break: break-word;
+  width: 30%;
+  min-width: 150px;
+}
+
+.summary-value {
+  padding: var(--spacing-sm) var(--spacing-md);
+  color: var(--color-foreground);
+  vertical-align: top;
+  line-height: 1.4;
+  width: 70%;
+}
+
+/* Summary value type styles */
+.value-monospace {
+  font-family: 'SFMono-Regular', Consolas, monospace;
+}
+
+.value-url {
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  word-break: break-all;
+}
+
+.value-normal {
+  color: var(--color-foreground);
+}
+
+.value-duration {
+  font-weight: 500;
+  color: var(--color-accent);
+}
+
+.value-method {
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.value-status {
+  font-weight: 600;
+}
+
+/* Method-specific colors */
+.value-method.method-get {
+  color: #10b981;
+}
+
+.value-method.method-post {
+  color: #3b82f6;
+}
+
+.value-method.method-put {
+  color: #f59e0b;
+}
+
+.value-method.method-delete {
+  color: #ef4444;
+}
+
+.value-method.method-patch {
+  color: #8b5cf6;
+}
+
+/* Status code colors */
+.value-status.status-2xx {
+  color: #10b981;
+}
+
+.value-status.status-3xx {
+  color: #f59e0b;
+}
+
+.value-status.status-4xx {
+  color: #ef4444;
+}
+
+.value-status.status-5xx {
+  color: #dc2626;
+}
+
+/* Headers table styles */
+.headers-table-container {
+  background: var(--color-background);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.headers-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  font-size: var(--font-size-small);
+}
+
+.headers-table th {
+  background: var(--color-background-elevation-1);
+  color: var(--color-foreground-secondary);
+  font-weight: 600;
+  padding: var(--spacing-sm) var(--spacing-md);
+  text-align: left;
+  border-bottom: 1px solid var(--color-details-hairline);
+  font-size: var(--font-size-small);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.header-name-col {
+  width: 30%;
+  min-width: 150px;
+}
+
+.header-value-col {
+  width: 70%;
+}
+
+.header-row {
+  border-bottom: 1px solid var(--color-details-hairline);
+}
+
+.header-row:hover {
+  background: var(--color-background-hover);
+}
+
+.header-row:last-child {
+  border-bottom: none;
+}
+
+.header-name {
+  padding: var(--spacing-sm) var(--spacing-md);
+  color: var(--color-info);
+  font-weight: 500;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+.header-value {
+  padding: var(--spacing-sm) var(--spacing-md);
+  color: var(--color-foreground);
+  vertical-align: top;
+  word-break: break-all;
+  line-height: 1.4;
+}
+
+.empty-headers {
+  background: var(--color-background);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: var(--spacing-lg);
+  text-align: center;
+  color: var(--color-foreground-secondary);
+  font-style: italic;
 }
 </style>

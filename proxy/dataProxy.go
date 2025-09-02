@@ -37,11 +37,13 @@ type DataProxy struct {
 
 func NewProxy() *DataProxy {
 	id := atomic.AddInt64(&maxIndex, 1)
+	now := time.Now()
 	data := &DataProxy{
 		Contents: &model.HttpContents{
 			RequestSummary: model.RequestSummary{
 				ID:        id,
-				StartTime: time.Now(),
+				StartTime: &now,
+				EndTime:   nil,
 			},
 		},
 		state:    -1,
@@ -80,10 +82,10 @@ func (p *DataProxy) target() string {
 }
 
 func (p *DataProxy) Duration() any {
-	if p.Contents.EndTime.IsZero() {
-		return time.Since(p.Contents.StartTime).Milliseconds()
+	if p.Contents.EndTime == nil {
+		return time.Since(*p.Contents.StartTime).Milliseconds()
 	}
-	return p.Contents.EndTime.Sub(p.Contents.StartTime).Milliseconds()
+	return p.Contents.EndTime.Sub(*p.Contents.StartTime).Milliseconds()
 }
 
 func (p *DataProxy) reportRequest(req *http.Request) {
@@ -152,7 +154,8 @@ func (p *DataProxy) reportEnd(dataType model.DataType) {
 
 	if dataType == model.ResponseBody {
 		p.Contents.Status = model.StatusCompleted
-		p.Contents.EndTime = time.Now()
+		now := time.Now()
+		p.Contents.EndTime = &now
 
 		if p.isStatic {
 			p.respBody.PushBack([]byte("[Static Resource Not Captured!]"))
@@ -178,7 +181,8 @@ func (p *DataProxy) reportError(error error) {
 	log.Printf("Error occurred in proxy request %d: %s reason: %s", p.Id(), p.target(), error)
 
 	p.Contents.Status = model.StatusError
-	p.Contents.EndTime = time.Now()
+	now := time.Now()
+	p.Contents.EndTime = &now
 	p.error = error
 	p.state = model.ERROR
 
@@ -246,19 +250,14 @@ func (p *DataProxy) processBodyData(dataType model.DataType, cb DataCb) {
 	defer p.lock.Unlock()
 	if p.state >= dataType {
 		var data []byte
-		var err error
 		if dataType == model.RequestBody {
-			data, err = json.Marshal(p.Contents.RequestBody)
+			data = p.Contents.RequestBody
 		} else if dataType == model.ResponseBody {
-			data, err = json.Marshal(p.Contents.ResponseBody)
+			data = p.Contents.ResponseBody
 		} else {
-			data, err = []byte{}, nil
+			data = []byte{}
 		}
-		if err == nil {
-			cb(dataType, data, time.Now(), true)
-		} else {
-			cb(dataType, []byte{}, time.Now(), true)
-		}
+		cb(dataType, data, time.Now(), true)
 	} else {
 		oldState := p.state
 		var bodyList *list.List
