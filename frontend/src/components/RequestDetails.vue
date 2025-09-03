@@ -58,8 +58,8 @@
           </div>
 
           <!-- Request Headers Tab -->
-          <div v-if="activeTab === 'headers'" class="tab-pane">
-            <div class="details-section">
+          <div v-if="activeTab === 'headers'" class="tab-pane headers-tab-pane">
+            <div class="details-section headers-section">
               <div class="details-section-title">Request Headers</div>
               <div v-if="Object.keys(requestDetails.requestHeaders.value).length > 0" class="headers-table-container">
                 <table class="headers-table">
@@ -83,7 +83,7 @@
             </div>
 
             <!-- Response Headers Tab -->
-            <div class="details-section">
+            <div class="details-section headers-section">
               <div class="details-section-title">Response Headers</div>
               <div v-if="Object.keys(requestDetails.responseHeaders.value).length > 0" class="headers-table-container">
                 <table class="headers-table">
@@ -113,6 +113,7 @@
               <BodyViewer
                   :body="requestDetails.requestBody.value"
                   :headers="requestDetails.requestHeaders.value"
+                  :finished="requestDetails.requestState.value>=1"
                   :view-mode="requestViewMode"
                   :auto-scroll="true"
                   label="Request Body"
@@ -127,11 +128,23 @@
               <BodyViewer
                   :body="requestDetails.responseBody.value"
                   :headers="requestDetails.responseHeaders.value"
-                  :requestState="requestDetails.requestState.value"
+                  :finished="requestDetails.requestState.value>=3"
                   :view-mode="responseViewMode"
                   :auto-scroll="false"
                   label="Response Body"
                   @update:view-mode="responseViewMode = $event"
+              />
+            </div>
+          </div>
+
+          <!-- AI Chat Tab -->
+          <div v-if="activeTab === 'ai-chat'" class="tab-pane">
+            <div class="details-section">
+              <ChatViewer
+                  :request-body="requestDetails.requestBody.value"
+                  :response-body="requestDetails.responseBody.value"
+                  :url="requestsStore.selectedRequest?.url || ''"
+                  :finished="requestDetails.requestState.value>=3"
               />
             </div>
           </div>
@@ -143,10 +156,12 @@
 </template>
 
 <script setup>
-import {ref, watch} from 'vue'
+import {ref, watch, computed} from 'vue'
 import {useRequestsStore} from '../stores/requests'
 import {useRequestDetails} from '../composables/useRequestDetails'
+import {isAIRequest} from '../utils/aiDetector'
 import BodyViewer from './BodyViewer.vue'
+import ChatViewer from './ai-components/ChatViewer.vue'
 
 const requestsStore = useRequestsStore()
 const requestDetails = useRequestDetails()
@@ -155,12 +170,30 @@ const activeTab = ref('summary')
 const requestViewMode = ref('raw')
 const responseViewMode = ref('raw')
 
-const tabs = [
-  {key: 'summary', label: 'Summary'},
-  {key: 'headers', label: 'Headers'},
-  {key: 'request', label: 'Request'},
-  {key: 'response', label: 'Response'}
-]
+// 检测是否为 AI 请求
+const isAIConversation = computed(() => {
+  const request = requestsStore.selectedRequest
+  if (!request) return false
+  
+  return isAIRequest(request.url, request.method, request.headers || {})
+})
+
+// 动态生成 tabs
+const tabs = computed(() => {
+  const baseTabs = [
+    {key: 'summary', label: 'Summary'},
+    {key: 'headers', label: 'Headers'},
+    {key: 'request', label: 'Request'},
+    {key: 'response', label: 'Response'}
+  ]
+  
+  // 如果是 AI 请求，在 response 后添加 AI Chat tab
+  if (isAIConversation.value) {
+    baseTabs.push({key: 'ai-chat', label: 'AI Chat'})
+  }
+  
+  return baseTabs
+})
 
 // Watch for selected request changes
 watch(() => requestsStore.selectedRequestId, (newId, oldId) => {
@@ -330,6 +363,26 @@ const formatHeaderValue = (value) => {
   background: var(--color-background-elevation-1);
   border-bottom: 1px solid var(--color-details-hairline);
   flex-shrink: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-foreground-secondary) transparent;
+}
+
+.details-tabs::-webkit-scrollbar {
+  height: 4px;
+}
+
+.details-tabs::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.details-tabs::-webkit-scrollbar-thumb {
+  background: var(--color-foreground-secondary);
+  border-radius: 2px;
+}
+
+.details-tabs::-webkit-scrollbar-thumb:hover {
+  background: var(--color-foreground);
 }
 
 .details-tab {
@@ -424,6 +477,11 @@ const formatHeaderValue = (value) => {
   padding: var(--spacing-lg);
 }
 
+/* Headers标签页特殊样式 - 允许滚动 */
+.headers-tab-pane {
+  overflow-y: auto;
+}
+
 @keyframes fadeIn {
   from {
     opacity: 0;
@@ -438,6 +496,13 @@ const formatHeaderValue = (value) => {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  margin-bottom: 0;
+}
+
+/* Headers标签页中的section样式 */
+.headers-section {
+  flex-shrink: 0;
+  overflow: visible;
 }
 
 .details-section-title {

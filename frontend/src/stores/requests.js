@@ -49,7 +49,7 @@ export const useRequestsStore = defineStore('requests', () => {
 
   const connect = () => {
     const wsUrl = 'ws://localhost:8080/ws'
-    connectWS(wsUrl, handleRequestSummary, handleConnectionError)
+    connectWS(wsUrl, handleRequestSummary, handleConnectionError, true)
   }
 
   const disconnect = () => {
@@ -117,7 +117,12 @@ export const useRequestsStore = defineStore('requests', () => {
 
   const setSorting = (column) => {
     if (sortColumn.value === column) {
-      sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc'
+      if (sortOrder.value === 'desc') {
+        sortOrder.value = 'asc'
+        return
+      }
+      sortColumn.value = 'id'
+      sortOrder.value = 'desc'
     } else {
       sortColumn.value = column
       sortOrder.value = 'desc'

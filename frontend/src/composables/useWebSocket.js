@@ -4,14 +4,14 @@ export function useWebSocket() {
   const isConnected = ref(false)
   const isConnecting = ref(false)
   const error = ref(null)
-  
+
   let ws = null
   let reconnectTimeout = null
   let reconnectAttempts = 0
   const maxReconnectAttempts = 5
   const reconnectDelay = 1000
 
-  const connect = (url, onMessage, onError) => {
+  const connect = (url, onMessage, onError, needReconnect) => {
     if (ws && ws.readyState === WebSocket.OPEN) {
       return
     }
@@ -42,11 +42,11 @@ export function useWebSocket() {
         isConnected.value = false
         isConnecting.value = false
         console.log(`WebSocket closed: ${event.code} ${event.reason}`)
-        
-        if (!event.wasClean && reconnectAttempts < maxReconnectAttempts) {
+
+        if (needReconnect && !event.wasClean && reconnectAttempts < maxReconnectAttempts) {
           reconnectAttempts++
           console.log(`Attempting to reconnect (${reconnectAttempts}/${maxReconnectAttempts})...`)
-          
+
           reconnectTimeout = setTimeout(() => {
             connect(url, onMessage, onError)
           }, reconnectDelay * reconnectAttempts)
@@ -73,12 +73,12 @@ export function useWebSocket() {
       clearTimeout(reconnectTimeout)
       reconnectTimeout = null
     }
-    
+
     if (ws) {
       ws.close(1000, 'Client disconnect')
       ws = null
     }
-    
+
     isConnected.value = false
     isConnecting.value = false
     reconnectAttempts = 0

@@ -79,18 +79,6 @@ func handleMonitorWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = conn.Close() }()
 
-	// 设置心跳和超时处理
-	err = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-	if err != nil {
-		log.Println("Monitor WebSocket set read timeout error:", err)
-		return
-	}
-
-	conn.SetPongHandler(func(string) error {
-		_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		return nil
-	})
-
 	monitorMutex.Lock()
 	monitorClients[conn] = true
 	monitorMutex.Unlock()
@@ -205,16 +193,6 @@ func handleDetailWebSocket(w http.ResponseWriter, r *http.Request) {
 		case <-ticker.C:
 			if err := conn.WriteMessage(websocket.PingMessage, []byte{}); err != nil {
 				log.Printf("Ping failed for request %s: %v", requestID, err)
-				return
-			}
-		default:
-			_, _, err := conn.ReadMessage()
-			if err != nil {
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					log.Printf("Detail WebSocket connection closed unexpectedly for request %s: %v", requestID, err)
-				} else {
-					log.Printf("Detail WebSocket connection closed for request %s", requestID)
-				}
 				return
 			}
 		}

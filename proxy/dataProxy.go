@@ -6,10 +6,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"path"
 	"proxyMan/model"
 	"runtime"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,6 +16,12 @@ import (
 type DataCb func(dataType model.DataType, data []byte, timestamp time.Time, finished bool)
 
 const cacheSize = 1000
+const maxBodySize = 100 * 1024 * 1024 //100MM
+var bodyMaxMsg = &(list.List{})
+
+func init() {
+	bodyMaxMsg.PushBack([]byte("Body too large!"))
+}
 
 var maxIndex int64 = 0
 var proxy = make([]*DataProxy, cacheSize)
@@ -29,10 +33,10 @@ type DataProxy struct {
 	state    model.DataType
 	reqBody  *list.List
 	respBody *list.List
+	bodySize int
 	lock     *sync.Mutex
 	cond     *sync.Cond
 	error    error
-	isStatic bool
 }
 
 func NewProxy() *DataProxy {
@@ -95,7 +99,6 @@ func (p *DataProxy) reportRequest(req *http.Request) {
 	fullURL := "https://" + req.Host + req.URL.String()
 	log.Printf("Intercepted HTTPS request: %s %s (ID: %d)", req.Method, fullURL, p.Id())
 
-	p.isStatic = isStaticResource(req.URL.String(), req.Header.Get("Content-Type"))
 	p.Contents.Status = model.StatusStarted
 	p.Contents.Method = req.Method
 	p.Contents.Host = req.Host
@@ -126,17 +129,32 @@ func (p *DataProxy) reportChunkData(dataType model.DataType, chunk []byte) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
-	if p.isStatic {
+	var bodyData *list.List
+	switch dataType {
+	case model.RequestBody:
+		bodyData = p.reqBody
+	case model.ResponseBody:
+		bodyData = p.respBody
+	}
+
+	if bodyData == nil {
 		return
 	}
 
-	switch dataType {
-	case model.RequestBody:
-		p.reqBody.PushBack(chunk)
-	case model.ResponseBody:
-		p.respBody.PushBack(chunk)
+	p.bodySize += len(chunk)
+	if p.bodySize > maxBodySize {
+		if bodyData == bodyMaxMsg {
+			return
+		}
+		p.reqBody = bodyMaxMsg
+	} else {
+		var chunkCopy []byte
+		chunkCopy = make([]byte, len(chunk))
+		copy(chunkCopy, chunk)
+		bodyData.PushBack(chunkCopy)
+		p.cond.Broadcast()
 	}
-	p.cond.Broadcast()
+
 }
 
 func (p *DataProxy) reportEnd(dataType model.DataType) {
@@ -144,27 +162,22 @@ func (p *DataProxy) reportEnd(dataType model.DataType) {
 	defer p.lock.Unlock()
 
 	if dataType == model.RequestBody {
-		if p.isStatic {
-			p.reqBody.PushBack([]byte("[Static Resource Not Captured!]"))
-		}
 		p.Contents.RequestBody = getBytes(p.reqBody)
 		p.reqBody = nil
 		p.state = model.RequestBody
+		p.bodySize = 0
 	}
 
 	if dataType == model.ResponseBody {
 		p.Contents.Status = model.StatusCompleted
 		now := time.Now()
 		p.Contents.EndTime = &now
-
-		if p.isStatic {
-			p.respBody.PushBack([]byte("[Static Resource Not Captured!]"))
-		}
 		p.Contents.ResponseBody = getBytes(p.respBody)
 		p.respBody = nil
 		p.Finished = true
 		// 修复：移除重复的状态设置，避免潜在的状态冲突
 		p.state = model.ResponseBody
+		p.bodySize = 0
 	}
 
 	model.SummaryBodyCast <- p.Contents.RequestSummary
@@ -304,10 +317,7 @@ func getBytes(list *list.List) []byte {
 		return nil
 	}
 
-	// 单次遍历：同时计算大小和收集chunk
-	var chunks [][]byte
 	var totalSize int
-
 	for e := list.Front(); e != nil; e = e.Next() {
 		chunk, ok := e.Value.([]byte)
 		if !ok {
@@ -315,7 +325,6 @@ func getBytes(list *list.List) []byte {
 			log.Printf("list contains a non-[]byte element of type %T", e.Value)
 			return nil
 		}
-		chunks = append(chunks, chunk)
 		totalSize += len(chunk)
 	}
 
@@ -325,45 +334,12 @@ func getBytes(list *list.List) []byte {
 
 	// 一次性分配内存并复制
 	result := make([]byte, totalSize)
-	var offset int
-	for _, chunk := range chunks {
-		copy(result[offset:], chunk)
-		offset += len(chunk)
+	pos := 0
+	for e := list.Front(); e != nil; e = e.Next() {
+		chunk := e.Value.([]byte)
+		copy(result[pos:], chunk)
+		pos += len(chunk)
 	}
 
 	return result
-}
-
-// isStaticResource checks if the request is for a static resource
-func isStaticResource(url, contentType string) bool {
-	// Common static file extensions
-	staticExtensions := []string{
-		".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg",
-		".woff", ".woff2", ".ttf", ".eot", ".mp3", ".mp4", ".avi", ".mov",
-		".pdf", ".zip", ".rar", ".tar", ".gz", ".bmp", ".webp", ".webm",
-	}
-
-	// Check file extension
-	ext := path.Ext(url)
-	for _, staticExt := range staticExtensions {
-		if strings.EqualFold(ext, staticExt) {
-			return true
-		}
-	}
-
-	// Check Content-Type headers
-	staticContentTypes := []string{
-		"text/css", "application/javascript", "text/javascript",
-		"image/", "font/", "audio/", "video/", "application/font",
-		"application/octet-stream",
-	}
-
-	contentTypeLower := strings.ToLower(contentType)
-	for _, staticType := range staticContentTypes {
-		if strings.Contains(contentTypeLower, staticType) {
-			return true
-		}
-	}
-
-	return false
 }

@@ -3,41 +3,43 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import * as monaco from 'monaco-editor'
+import {ref, onMounted, onUnmounted, watch, nextTick} from 'vue'
+import * as monaco from 'monaco-editor';
 
-// 禁用所有语言服务的Worker
-if (typeof monaco !== 'undefined') {
-  // 禁用TypeScript/JavaScript语言服务
-  monaco.languages.typescript?.typescriptDefaults?.setWorkerOptions({
-    customWorkerPath: undefined
-  })
-  monaco.languages.typescript?.javascriptDefaults?.setWorkerOptions({
-    customWorkerPath: undefined
-  })
-  
-  // 禁用其他语言服务
-  if (monaco.languages.json?.jsonDefaults) {
-    monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
-      validate: false,
-      allowComments: false,
-      schemaValidation: 'ignore'
-    })
-  }
-  
-  if (monaco.languages.html?.htmlDefaults) {
-    monaco.languages.html.htmlDefaults.setOptions({
-      validate: false
-    })
-  }
-  
-  if (monaco.languages.css?.cssDefaults) {
-    monaco.languages.css.cssDefaults.setOptions({
-      validate: false
-    })
-  }
-}
+// --- 关键配置：开始 ---
+// 1. 导入 worker 脚本
+//    `?worker` 是 Vite 的语法，它会将脚本作为 web worker 加载
+import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
+import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker';
+import cssWorker from 'monaco-editor/esm/vs/language/css/css.worker?worker';
+import htmlWorker from 'monaco-editor/esm/vs/language/html/html.worker?worker';
+import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker';
 
+// 2. 配置 self.MonacoEnvironment
+//    注意：这里使用 self 而不是 window，是为了在 SSR 等环境下也能工作
+self.MonacoEnvironment = {
+  getWorker(_, label) {
+    if (label === 'json') {
+      return new jsonWorker();
+    }
+    if (label === 'css' || label === 'scss' || label === 'less') {
+      return new cssWorker();
+    }
+    if (label === 'html' || label === 'handlebars' || label === 'razor') {
+      return new htmlWorker();
+    }
+    if (label === 'typescript' || label === 'javascript') {
+      return new tsWorker();
+    }
+    // 默认返回通用的 editor worker
+    return new editorWorker();
+  },
+};
+// --- 关键配置：结束 ---
+
+
+const editorContainer = ref(null);
+let editor = null;
 const props = defineProps({
   value: {
     type: String,
@@ -58,17 +60,10 @@ const props = defineProps({
   height: {
     type: String,
     default: '300px'
-  },
-  wordWrap: {
-    type: String,
-    default: 'on'
   }
 })
-
 const emit = defineEmits(['update:value'])
 
-const editorContainer = ref(null)
-let editor = null
 
 const initEditor = () => {
   if (!editorContainer.value) return
@@ -78,11 +73,16 @@ const initEditor = () => {
     language: props.language,
     theme: props.theme,
     readOnly: props.readOnly,
-    wordWrap: props.wordWrap,
-    minimap: { enabled: false },
+    wordWrap: 'off',
+    wordWrapColumn: 0,
+    wordWrapMinified: false,
+    wrappingIndent: 'none',
+    wordWrapOverride1: 'off',
+    wordWrapOverride2: 'off',
+    minimap: { enabled: true},
     scrollBeyondLastLine: false,
-    fontSize: 13,
-    lineHeight: 20,
+    fontSize: 12,
+    lineHeight: 18,
     automaticLayout: true,
     // 代码折叠相关配置
     folding: true,
@@ -108,13 +108,13 @@ const initEditor = () => {
     },
     // 禁用可能触发Worker的智能功能
     quickSuggestions: false,
-    parameterHints: { enabled: false },
+    parameterHints: {enabled: false},
     suggestOnTriggerCharacters: false,
     acceptSuggestionOnEnter: 'off',
     tabCompletion: 'off',
     wordBasedSuggestions: 'off',
-    hover: { enabled: false },
-    lightbulb: { enabled: false },
+    hover: {enabled: false},
+    lightbulb: {enabled: false},
     // 保留基本语法高亮但禁用语义功能
     'semanticHighlighting.enabled': false
   })
@@ -125,11 +125,14 @@ const initEditor = () => {
       emit('update:value', editor.getValue())
     })
   }
+
+  setTimeout(() => formatEditorContent(), 500) //等待初始化完毕
 }
 
 const updateEditorValue = (newValue) => {
   if (editor && editor.getValue() !== newValue) {
     editor.setValue(newValue || '')
+    formatEditorContent()
   }
 }
 
@@ -138,6 +141,7 @@ const updateEditorLanguage = (newLanguage) => {
     const model = editor.getModel()
     if (model) {
       monaco.editor.setModelLanguage(model, newLanguage)
+      formatEditorContent()
     }
   }
 }
@@ -145,6 +149,40 @@ const updateEditorLanguage = (newLanguage) => {
 const updateEditorTheme = (newTheme) => {
   if (editor) {
     monaco.editor.setTheme(newTheme)
+  }
+}
+
+// 提供一个格式化函数
+function formatEditorContent() {
+  if (!editor) return;
+
+  // 1. 保存当前状态
+  const isCurrentlyReadOnly = editor.getOption(monaco.editor.EditorOption.readOnly);
+
+  // 如果当前不是只读，直接格式化即可
+  if (!isCurrentlyReadOnly) {
+    editor.getAction('editor.action.formatDocument').run();
+    return;
+  }
+
+  // --- 核心逻辑 ---
+  // 2. 临时设置为可写
+  editor.updateOptions({readOnly: false});
+
+  // 3. 执行格式化
+  const formatAction = editor.getAction('editor.action.formatDocument');
+
+  if (formatAction) {
+    // 格式化动作是异步的，返回一个 Promise
+    formatAction.run().then(() => {
+      // 4. 在格式化完成后，恢复原来的只读状态
+      console.log('格式化完成，恢复只读状态。');
+      editor.updateOptions({readOnly: true});
+    }).catch(error => {
+      console.error('格式化失败:', error);
+      // 即使失败也要恢复只读状态
+      editor.updateOptions({readOnly: true});
+    });
   }
 }
 
