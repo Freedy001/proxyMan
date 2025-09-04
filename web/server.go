@@ -1,10 +1,12 @@
 package web
 
 import (
+	"embed"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
-	"net/url"
+	"os"
 	"proxyMan/model"
 	"proxyMan/proxy"
 	"strings"
@@ -14,54 +16,10 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// isValidOrigin checks if the request origin is allowed
-func isValidOrigin(r *http.Request) bool {
-	// Get the origin header
-	origin := r.Header.Get("Origin")
-	if origin == "" {
-		// Allow requests without origin (like from Postman, curl, etc.)
-		return true
-	}
-
-	// Parse the origin URL
-	originURL, err := url.Parse(origin)
-	if err != nil {
-		log.Printf("Invalid origin URL: %s, error: %v", origin, err)
-		return false
-	}
-
-	// Get the host from the request
-	requestHost := r.Host
-	if requestHost == "" {
-		requestHost = "localhost:8080" // Default host
-	}
-
-	// Allow same-origin requests
-	if originURL.Host == requestHost {
-		return true
-	}
-
-	// Allow localhost variations for development
-	allowedHosts := []string{
-		"localhost:3000",
-		"127.0.0.1:3000",
-		"localhost:8080",
-		"127.0.0.1:8080",
-		"[::1]:8080",
-	}
-
-	for _, allowedHost := range allowedHosts {
-		if originURL.Host == allowedHost {
-			return true
-		}
-	}
-
-	log.Printf("Rejected WebSocket connection from origin: %s", origin)
-	return false
-}
-
 var upgrader = websocket.Upgrader{
-	CheckOrigin: isValidOrigin, // 使用安全的origin检查
+	CheckOrigin: func(r *http.Request) bool {
+		return true // 允许所有 Origin
+	},
 }
 
 // WebSocket client management for real-time monitoring
@@ -231,9 +189,17 @@ func handleMonitorMessages() {
 	}
 }
 
+//go:embed dist/**
+var frontendFiles embed.FS
+
 func StartWebServer() {
-	fs := http.FileServer(http.Dir("web/static"))
-	http.Handle("/", fs)
+	// 创建指向 dist 目录的子文件系统
+	distFS, err := fs.Sub(frontendFiles, "dist")
+	if err != nil {
+		log.Fatal("Failed to create sub filesystem: ", err)
+	}
+
+	http.Handle("/", http.FileServer(http.FS(distFS)))
 
 	// Real-time monitoring WebSocket (lightweight summaries)
 	http.HandleFunc("/ws", handleMonitorWebSocket)
@@ -244,10 +210,15 @@ func StartWebServer() {
 	// Start the message broadcasting goroutine
 	go handleMonitorMessages()
 
-	log.Println("Starting Web Server on :8080")
+	port := "8080"
+	if len(os.Args) > 2 {
+		port = os.Args[2]
+	}
+
+	log.Println("Starting Web Server on :" + port)
 	log.Println("  /ws - Real-time monitoring (lightweight)")
 	log.Println("  /ws/details/{id} - Detailed streaming")
-	if err := http.ListenAndServe(":8080", nil); err != nil {
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
 		log.Fatal("ListenAndServe: ", err)
 	}
 }

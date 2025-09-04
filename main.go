@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"proxyMan/cert"
 	"proxyMan/proxy"
 	"proxyMan/web"
@@ -19,12 +20,17 @@ func main() {
 
 	go web.StartWebServer()
 
+	port := "8888"
+	if len(os.Args) > 1 {
+		port = os.Args[1]
+	}
+
 	server := &http.Server{
-		Addr:    ":8888",
+		Addr:    ":" + port,
 		Handler: http.HandlerFunc(proxy.HandleHTTP),
 	}
 
-	log.Println("Starting Proxy Server on :8888")
+	log.Println("Starting Proxy Server on :" + port)
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatal("ListenAndServe: ", err)
 	}

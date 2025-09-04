@@ -28,10 +28,7 @@ export function useRequestDetails() {
     currentRequestId = requestId
 
     // Connect to WebSocket for request details
-    const wsUrl = `ws://localhost:8080/ws/details/${requestId}`
-    console.log('loadRequestDetails - connecting to WebSocket:', wsUrl)
-
-    connectWS(wsUrl, handleDataChunk, handleError)
+    connectWS(`/ws/details/${requestId}`, handleDataChunk, handleError)
   }
 
   const handleDataChunk = (chunk) => {

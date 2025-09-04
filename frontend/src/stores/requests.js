@@ -48,8 +48,7 @@ export const useRequestsStore = defineStore('requests', () => {
   const requestCount = computed(() => requests.value.length)
 
   const connect = () => {
-    const wsUrl = 'ws://localhost:8080/ws'
-    connectWS(wsUrl, handleRequestSummary, handleConnectionError, true)
+    connectWS('/ws', handleRequestSummary, handleConnectionError, true)
   }
 
   const disconnect = () => {

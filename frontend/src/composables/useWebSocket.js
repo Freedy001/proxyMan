@@ -11,7 +11,7 @@ export function useWebSocket() {
   const maxReconnectAttempts = 5
   const reconnectDelay = 1000
 
-  const connect = (url, onMessage, onError, needReconnect) => {
+  const connect = (path, onMessage, onError, needReconnect) => {
     if (ws && ws.readyState === WebSocket.OPEN) {
       return
     }
@@ -19,6 +19,7 @@ export function useWebSocket() {
     isConnecting.value = true
     error.value = null
 
+    let url = `${window.location.protocol.includes('https') ? 'wss' : 'ws'}://${window.location.host}${path.startsWith('/') ? path : '/' + path}`
     try {
       ws = new WebSocket(url)
 

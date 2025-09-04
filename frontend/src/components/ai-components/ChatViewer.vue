@@ -1,42 +1,45 @@
 <template>
   <div class="chat-viewer">
-    <div v-if="!hasMessages" class="empty-chat">
+    <div v-if="!requestData" class="empty-chat">
       <div class="empty-chat-icon">💬</div>
       <div class="empty-chat-title">No AI conversation detected</div>
       <div class="empty-chat-description">
         This request doesn't appear to contain AI chat messages
       </div>
     </div>
-    
+
     <div v-else class="chat-content">
       <!-- Chat Header -->
       <div class="chat-header">
         <div class="chat-title">
-          <span class="provider-badge" :class="providerClass">{{ providerName }}</span>
+          <span class="provider-badge"
+                :class="'provider-'+aiProvider?.name.toLowerCase() ?? 'generic'">
+            {{ aiProvider?.name ?? 'Unknown' }}
+          </span>
           <span class="model-info" v-if="modelName">{{ modelName }}</span>
         </div>
         <div class="chat-controls">
-          <button 
-            class="control-button"
-            :class="{ active: showMetadata }"
-            @click="toggleMetadata"
-            title="Toggle metadata"
+          <button
+              class="control-button"
+              :class="{ active: showMetadata }"
+              @click="toggleMetadata"
+              title="Toggle metadata"
           >
             <span class="control-icon">📊</span>
             Metadata
           </button>
-          <button 
-            class="control-button"
-            :class="{ active: autoScroll }"
-            @click="toggleAutoScroll"
-            title="Toggle auto-scroll"
+          <button
+              class="control-button"
+              :class="{ active: autoScroll }"
+              @click="toggleAutoScroll"
+              title="Toggle auto-scroll"
           >
             <span class="control-icon">📄</span>
             Auto-scroll
           </button>
         </div>
       </div>
-      
+
       <!-- Metadata Panel -->
       <div v-if="showMetadata" class="metadata-panel">
         <div class="metadata-grid">
@@ -66,7 +69,7 @@
           </div>
         </div>
       </div>
-      
+
       <!-- Messages Container -->
       <div class="messages-container" ref="messagesContainer">
         <!-- System Message -->
@@ -78,13 +81,13 @@
             <div class="message-text">{{ systemMessage }}</div>
           </div>
         </div>
-        
+
         <!-- Conversation Messages -->
-        <div 
-          v-for="(message, index) in displayMessages" 
-          :key="message.id || index"
-          class="message"
-          :class="getMessageClass(message)"
+        <div
+            v-for="(message, index) in displayMessages"
+            :key="message.id || index"
+            class="message"
+            :class="getMessageClass(message)"
         >
           <div class="message-header">
             <span class="message-role">{{ getRoleDisplay(message.role) }}</span>
@@ -92,34 +95,34 @@
               {{ formatTimestamp(message.timestamp) }}
             </span>
           </div>
-          
+
           <div class="message-content">
             <!-- Text Content -->
             <div v-if="getTextContent(message)" class="message-text">
               <!-- 使用折叠组件显示工具回复 -->
-              <CollapsibleToolMessage 
-                v-if="message.role === 'tool'"
-                :message="message"
-                class="message-text-content"
+              <CollapsibleToolMessage
+                  v-if="message.role === 'tool'"
+                  :message="message"
+                  class="message-text-content"
               />
               <!-- 使用 Markdown 渲染 AI 助手回复，其他消息保持纯文本 -->
-              <MarkdownRenderer 
-                v-else-if="message.role === 'assistant'"
-                :content="getTextContent(message)"
-                class="message-text-content"
+              <MarkdownRenderer
+                  v-else-if="message.role === 'assistant'"
+                  :content="getTextContent(message)"
+                  class="message-text-content"
               />
               <div v-else class="message-text-content">{{ getTextContent(message) }}</div>
             </div>
-            
+
             <!-- Tool Calls -->
             <div v-if="message.toolCalls && message.toolCalls.length > 0" class="tool-calls">
-              <ToolCallViewer 
-                v-for="(toolCall, idx) in message.toolCalls" 
-                :key="idx"
-                :tool-call="toolCall"
+              <ToolCallViewer
+                  v-for="(toolCall, idx) in message.toolCalls"
+                  :key="idx"
+                  :tool-call="toolCall"
               />
             </div>
-            
+
             <!-- Streaming Indicator -->
             <div v-if="message.isStreaming" class="streaming-indicator">
               <span class="streaming-dots">●●●</span>
@@ -127,7 +130,7 @@
             </div>
           </div>
         </div>
-        
+
         <!-- Error Message -->
         <div v-if="error" class="message error-message">
           <div class="message-header">
@@ -142,12 +145,15 @@
   </div>
 </template>
 
-<script setup>
-import { ref, computed, watch, nextTick, onMounted } from 'vue'
-import { parseAIConversation, extractToolCalls, parseStreamData, isStreamResponse } from '../../utils/aiDetector.js'
+<script lang="ts" setup>
+import {computed, nextTick, onMounted, ref, watch} from 'vue'
+import {getAIProvider, isStreamResponse} from '@/utils/aiDetector.ts'
 import ToolCallViewer from './ToolCallViewer.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import CollapsibleToolMessage from './CollapsibleToolMessage.vue'
+import type {OpenAI} from "@/utils/LLMSModels.ts"
+import {languages} from "monaco-editor";
+import json = languages.json;
 
 const props = defineProps({
   requestBody: {
@@ -173,106 +179,111 @@ const messagesContainer = ref(null)
 const showMetadata = ref(false)
 const autoScroll = ref(true)
 const error = ref('')
+const usage = ref(null)
 
-// 解析 AI 对话数据
-const conversationData = computed(() => {
-  if (!props.requestBody && !props.responseBody) {
-    return null
-  }
-  
-  try {
-    return parseAIConversation(props.requestBody, props.responseBody, props.url)
-  } catch (err) {
-    error.value = `Failed to parse AI conversation: ${err.message}`
-    return null
-  }
-})
+// 获取 AI Provider
+const aiProvider = getAIProvider(props.url)
 
 // 请求和响应数据
-const requestData = computed(() => conversationData.value?.request)
-const responseData = computed(() => conversationData.value?.response)
-const provider = computed(() => conversationData.value?.provider || 'generic')
-
-// Provider 显示
-const providerName = computed(() => {
-  switch (provider.value) {
-    case 'openai': return 'OpenAI'
-    case 'anthropic': return 'Anthropic'
-    default: return 'AI'
+const requestData = computed<OpenAI.ChatCompletionRequest | null>(() => {
+  try {
+    if (!props.requestBody || !aiProvider) return null
+    console.log(JSON.parse(props.requestBody))
+    console.log(aiProvider.parseRequest(props.requestBody))
+    return aiProvider.parseRequest(props.requestBody)
+  } catch (err) {
+    error.value = `Failed to parse AI request: ${err.message}`
+    console.log(err)
+    return null
   }
 })
-
-const providerClass = computed(() => `provider-${provider.value}`)
 
 // 模型名称
 const modelName = computed(() => {
   return requestData.value?.model || responseData.value?.model || ''
 })
 
-// 系统消息 (现在总是 OpenAI 格式)
+// 系统消息
 const systemMessage = computed(() => {
   const systemMsg = requestData.value?.messages?.find(msg => msg.role === 'system')
   return systemMsg?.content
 })
 
-// 是否有消息
-const hasMessages = computed(() => {
-  return conversationData.value && (requestData.value || responseData.value)
-})
+// 解析流式数据
+const parseStreamData = (responseBody): OpenAI.Chunk[] => {
+  if (!responseBody || !aiProvider) return []
+
+  const chunks: OpenAI.Chunk = []
+
+  for (const line of responseBody.split('\n')) {
+    if (line.startsWith('data: ')) {
+      try {
+        const chunk = aiProvider.parseChunk(line)
+        if (chunk) chunks.push(chunk)
+      } catch (err) {
+        console.warn('Failed to parse chunk:', err)
+      }
+    }
+  }
+
+  return chunks
+}
 
 // 显示的消息列表
-const displayMessages = computed(() => {
-  if (!hasMessages.value) return []
-  
-  const messages = []
-  
-  // 添加请求消息 (现在总是 OpenAI 格式)
-  if (requestData.value?.messages) {
-    requestData.value.messages.forEach(msg => {
-      if (msg.role !== 'system') {
-        messages.push({
-          ...msg,
-          id: `req-${messages.length}`,
-          toolCalls: extractToolCalls(msg, 'openai'), // 传递provider参数
-          timestamp: Date.now()
-        })
-      }
-    })
-  }
-  
-  // 处理流式响应
-  if (isStreamResponse(props.responseBody)) {
-    const streamChunks = parseStreamData(props.responseBody, provider.value) // 传递provider参数
-    let assistantMessage = {
-      role: 'assistant',
-      content: '',
-      id: 'stream-assistant',
-      toolCalls: [],
-      timestamp: Date.now(),
-      isStreaming: !props.finished
-    }
-    
-    // 用于累积工具调用的临时存储
-    const toolCallsMap = new Map()
-    
-    // 合并流式数据块 (现在只处理 OpenAI 格式)
-    streamChunks.forEach(chunk => {
-      if (chunk.type === 'data' && chunk.data) {
-        // 处理文本内容
-        if (chunk.data.choices?.[0]?.delta?.content) {
-          assistantMessage.content += chunk.data.choices[0].delta.content
+const displayMessages: OpenAI.ChatCompletionRequest[] = computed<OpenAI.ChatCompletionRequest[]>(() => {
+  if (!computed(() => {
+    return requestData.value
+  }).value) return []
+  const messages: OpenAI.ChatCompletionRequest = []
+  try {
+    // 添加请求消息
+    if (requestData.value?.messages) {
+      requestData.value.messages.forEach(msg => {
+        if (msg.role !== 'system') {
+          messages.push({
+            ...msg,
+            id: `req-${messages.length}`,
+            toolCalls: msg.tool_calls || [],
+            timestamp: Date.now()
+          })
         }
-        
+      })
+    }
+
+    // 处理流式响应
+    if (isStreamResponse(props.responseBody)) {
+      const streamChunks = parseStreamData(props.responseBody)
+      let assistantMessage = {
+        role: 'assistant',
+        content: '',
+        id: 'stream-assistant',
+        toolCalls: [],
+        timestamp: Date.now(),
+        isStreaming: !props.finished
+      }
+
+      // 用于累积工具调用的临时存储
+      const toolCallsMap = new Map()
+
+      // 合并流式数据块
+      streamChunks.forEach(chunk => {
+        if (chunk?.usage) usage.value = chunk.usage
+
+        // 处理文本内容
+        if (chunk.choices?.[0]?.delta?.content) {
+          assistantMessage.content += chunk.choices[0].delta.content
+        }
+
         // 处理工具调用
-        if (chunk.data.choices?.[0]?.delta?.tool_calls) {
-          chunk.data.choices[0].delta.tool_calls.forEach(toolCall => {
+        if (chunk.choices?.[0]?.delta?.tool_calls) {
+          chunk.choices[0].delta.tool_calls.forEach(toolCall => {
             if (toolCall.index !== undefined) {
               const existingCall = toolCallsMap.get(toolCall.index) || {
                 type: 'function',
                 id: toolCall.id || '',
-                function: { name: '', arguments: '' }
+                function: {name: '', arguments: ''}
               }
-              
+
               if (toolCall.function?.name) {
                 existingCall.function.name = toolCall.function.name
               }
@@ -282,64 +293,74 @@ const displayMessages = computed(() => {
               if (toolCall.id) {
                 existingCall.id = toolCall.id
               }
-              
+
               toolCallsMap.set(toolCall.index, existingCall)
             }
           })
         }
-      }
-    })
-    
-    // 将累积的工具调用添加到消息中
-    if (toolCallsMap.size > 0) {
-      assistantMessage.toolCalls = Array.from(toolCallsMap.values())
-    }
-    
-    if (assistantMessage.content || assistantMessage.toolCalls.length > 0) {
-      messages.push(assistantMessage)
-    }
-  } else {
-    // 处理普通响应 (现在总是 OpenAI 格式)
-    if (responseData.value?.choices) {
-      responseData.value.choices.forEach((choice, idx) => {
-        if (choice.message) {
-          messages.push({
-            ...choice.message,
-            id: `resp-${idx}`,
-            toolCalls: extractToolCalls(choice.message, 'openai'), // 传递provider参数
-            timestamp: responseData.value.created ? responseData.value.created * 1000 : Date.now()
-          })
-        }
       })
+
+      // 将累积的工具调用添加到消息中
+      if (toolCallsMap.size > 0) {
+        assistantMessage.toolCalls = Array.from(toolCallsMap.values())
+      }
+
+      if (assistantMessage.content || assistantMessage.toolCalls.length > 0) {
+        messages.push(assistantMessage)
+      }
+    } else {
+      // 处理普通响应
+      if (props.responseBody) {
+        let response = aiProvider?.parseResponse(props.responseBody);
+        if (response?.usage) usage.value = response.usage
+        response?.choices.forEach((choice, idx) => {
+          if (choice.message) {
+            messages.push({
+              ...choice.message,
+              id: `resp-${idx}`,
+              toolCalls: choice.message.tool_calls || [],
+              timestamp: responseData.value.created ? responseData.value.created * 1000 : Date.now()
+            })
+          }
+        })
+      }
     }
+  } catch (e) {
+    error.value = `Failed to parse AI response: ${e.message}`
+    console.log(e)
   }
-  
+
   return messages
 })
 
 // 消息样式类
 const getMessageClass = (message) => {
   const classes = [`${message.role}-message`]
-  
+
   if (message.isStreaming) {
     classes.push('streaming')
   }
-  
+
   if (message.toolCalls && message.toolCalls.length > 0) {
     classes.push('has-tools')
   }
-  
+
   return classes
 }
 
 // 角色显示名称
 const getRoleDisplay = (role) => {
   switch (role) {
-    case 'user': return 'User'
-    case 'assistant': return 'Assistant'
-    case 'system': return 'System'
-    case 'tool': return 'Tool'
-    default: return role
+    case 'user':
+      return 'User'
+    case 'assistant':
+      return 'Assistant'
+    case 'system':
+      return 'System'
+    case 'tool':
+      return 'Tool'
+    default:
+      return role
   }
 }
 
@@ -348,14 +369,14 @@ const getTextContent = (message) => {
   if (typeof message.content === 'string') {
     return message.content
   }
-  
+
   if (Array.isArray(message.content)) {
     const textParts = message.content
-      .filter(part => part.type === 'text')
-      .map(part => part.text)
+        .filter(part => part.type === 'text')
+        .map(part => part.text)
     return textParts.join('\n')
   }
-  
+
   return ''
 }
 
@@ -367,12 +388,12 @@ const formatTimestamp = (timestamp) => {
 // 格式化 token 使用量
 const formatTokenUsage = (usage) => {
   if (!usage) return ''
-  
+
   const parts = []
   if (usage.prompt_tokens) parts.push(`${usage.prompt_tokens} prompt`)
   if (usage.completion_tokens) parts.push(`${usage.completion_tokens} completion`)
   if (usage.total_tokens) parts.push(`${usage.total_tokens} total`)
-  
+
   return parts.join(', ')
 }
 
@@ -578,12 +599,12 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-md);
-  
+
   /* 优化大屏幕体验 */
   @media (min-width: 1024px) {
     padding: var(--spacing-lg) var(--spacing-xl);
   }
-  
+
   /* 移动端优化 */
   @media (max-width: 768px) {
     padding: var(--spacing-md) var(--spacing-sm);
@@ -683,7 +704,7 @@ onMounted(() => {
 }
 
 .user-message .message-content {
-  background: var(--color-accent);
+  background: #5a4ca5;
   color: white;
   border-color: var(--color-accent);
 }
@@ -733,8 +754,12 @@ onMounted(() => {
 }
 
 @keyframes pulse {
-  0%, 100% { opacity: 0.3; }
-  50% { opacity: 1; }
+  0%, 100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 .streaming-text {
@@ -758,8 +783,12 @@ onMounted(() => {
 }
 
 @keyframes glow {
-  0%, 100% { opacity: 0.3; }
-  50% { opacity: 1; }
+  0%, 100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 /* 响应式宽度优化 */
@@ -767,7 +796,7 @@ onMounted(() => {
   .message {
     max-width: min(95%, 1600px);
   }
-  
+
   .assistant-message {
     max-width: min(95%, 1600px);
   }
@@ -777,7 +806,7 @@ onMounted(() => {
   .error-message {
     max-width: min(92%, 1400px);
   }
-  
+
   .user-message {
     max-width: min(88%, 1200px);
   }
@@ -787,7 +816,7 @@ onMounted(() => {
   .message {
     max-width: 100%;
   }
-  
+
   .system-message,
   .user-message,
   .assistant-message,
@@ -795,11 +824,11 @@ onMounted(() => {
   .error-message {
     max-width: 100%;
   }
-  
+
   .user-message {
     align-self: stretch;
   }
-  
+
   .assistant-message {
     align-self: stretch;
   }
@@ -809,7 +838,7 @@ onMounted(() => {
   .message {
     max-width: min(96%, 1000px);
   }
-  
+
   .assistant-message {
     max-width: min(96%, 1000px);
   }
@@ -820,11 +849,11 @@ onMounted(() => {
   .message {
     max-width: min(95%, 1400px);
   }
-  
+
   .assistant-message {
     max-width: min(95%, 1400px);
   }
-  
+
   .messages-container {
     padding-left: var(--spacing-xl);
     padding-right: var(--spacing-xl);
@@ -835,7 +864,7 @@ onMounted(() => {
   .message {
     max-width: min(92%, 1600px);
   }
-  
+
   .assistant-message {
     max-width: min(92%, 1600px);
   }
@@ -850,7 +879,7 @@ onMounted(() => {
   .message {
     max-width: 100%;
   }
-  
+
   .system-message,
   .user-message,
   .assistant-message,
@@ -859,7 +888,7 @@ onMounted(() => {
     max-width: 100%;
     align-self: stretch;
   }
-  
+
   .messages-container {
     padding-left: var(--spacing-sm);
     padding-right: var(--spacing-sm);

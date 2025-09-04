@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"io"
 	"log"
+	"net"
 	"net/http"
 
 	"proxyMan/cert"
@@ -16,13 +17,82 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
+// 定义一个包装类型，它将 bufio.Reader 和 net.Conn 结合起来。
+// 这样我们既可以读取缓冲区中的数据，又可以写入原始连接。
+// 它实现了 net.Conn 接口。
+type bufferedConn struct {
+	r *bufio.Reader
+	net.Conn
+}
+
+// 重写 Read 方法，使其从 bufio.Reader 中读取。
+// 这样，被 Peek() 的数据也能被正确读取。
+func (b bufferedConn) Read(p []byte) (int, error) {
+	return b.r.Read(p)
+}
+
 // HandleHTTP is the main handler for all incoming proxy requests.
 func HandleHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodConnect {
 		handleConnect(w, r)
 	} else {
-		//handlePlainHTTP(w, r)
+		handlePlainHTTP(w, r)
 	}
+}
+
+func handlePlainHTTP(w io.Writer, r *http.Request) {
+	// 创建DataProxy实例来跟踪这个请求
+	proxy := NewProxy()
+	// 报告请求信息
+	proxy.reportRequest(r)
+
+	// 代理请求流
+	pr, pw := io.Pipe()
+	bodyReader := r.Body
+	r.Body = pr
+	go copyStream(bodyReader, pw, proxy, model.RequestBody, r.Header)
+
+	// 清除RequestURI字段，避免客户端请求错误
+	// Go HTTP客户端不允许设置RequestURI，这是服务器端专用字段
+	r.RequestURI = ""
+	r.URL.Scheme = "http"
+	r.URL.Host = r.Host
+
+	// 转发请求到目标服务器
+	targetResp, err := (&http.Client{
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+		},
+	}).Do(r)
+	if err != nil {
+		proxy.reportError(err)
+		_ = (&http.Response{
+			StatusCode: http.StatusBadGateway,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(http.NoBody),
+			Proto:      "HTTP/1.1",
+			ProtoMajor: 1,
+			ProtoMinor: 1,
+		}).Write(w)
+		return
+	}
+
+	defer targetResp.Body.Close()
+	proxy.reportResponse(targetResp)
+
+	// 代理响应
+	pr, pw = io.Pipe()
+	remoteBodyReader := targetResp.Body
+	targetResp.Body = pr
+	go copyStream(remoteBodyReader, pw, proxy, model.ResponseBody, targetResp.Header)
+
+	err = targetResp.Write(w)
+	if err != nil {
+		proxy.reportError(err)
+		return
+	}
+
+	log.Printf("Completed HTTPS request: (ID: %d, Duration: %dms)", proxy.Id(), proxy.Duration())
 }
 
 // handleConnect handles HTTPS CONNECT requests for MITM.
@@ -45,6 +115,29 @@ func handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	bufReader := bufio.NewReader(clientConn)
+	// 窥探第一个字节来判断协议
+	firstByte, err := bufReader.Peek(1)
+	if err != nil {
+		log.Printf("Failed to peek first byte from %s: %s", r.Host, err)
+		return
+	}
+
+	// TLS Handshake record type in decimal is 22
+	if firstByte[0] != 0x16 {
+		// --- 是普通HTTP流量，建立TCP隧道 ---
+		log.Printf("Protocol Sniffing: Detected HTTP for %s", r.Host)
+		clientReq, err := http.ReadRequest(bufReader)
+		if err != nil {
+			log.Printf("Failed to read HTTP request from %s: %s", r.Host, err)
+			return
+		}
+		handlePlainHTTP(clientConn, clientReq)
+		return
+	}
+
+	// --- 是TLS流量，处理HTTPS ---
+
 	tlsCert, err := cert.GetCertificate(r.Host)
 	if err != nil {
 		log.Printf("Failed to get certificate for %s: %s", r.Host, err)
@@ -52,7 +145,7 @@ func handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tlsConn := tls.Server(clientConn, &tls.Config{Certificates: []tls.Certificate{*tlsCert}})
+	tlsConn := tls.Server(bufferedConn{r: bufReader, Conn: clientConn}, &tls.Config{Certificates: []tls.Certificate{*tlsCert}})
 	if err := tlsConn.Handshake(); err != nil {
 		log.Printf("TLS handshake error with %s: %s", r.Host, err)
 		_ = tlsConn.Close()
@@ -81,7 +174,11 @@ func handleConnect(w http.ResponseWriter, r *http.Request) {
 	clientReq.URL.Scheme = "https"
 	clientReq.URL.Host = clientReq.Host
 
-	targetResp, err := (&http.Client{}).Do(clientReq)
+	targetResp, err := (&http.Client{
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+		},
+	}).Do(clientReq)
 	if err != nil {
 		proxy.reportError(err)
 		writeErrorMsg(tlsConn)

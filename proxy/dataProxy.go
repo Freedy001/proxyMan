@@ -96,8 +96,19 @@ func (p *DataProxy) reportRequest(req *http.Request) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
-	fullURL := "https://" + req.Host + req.URL.String()
-	log.Printf("Intercepted HTTPS request: %s %s (ID: %d)", req.Method, fullURL, p.Id())
+	var fullURL string
+	var protocol string
+	if req.URL.Scheme == "http" {
+		fullURL = "http://" + req.Host + req.URL.Path
+		if req.URL.RawQuery != "" {
+			fullURL += "?" + req.URL.RawQuery
+		}
+		protocol = "HTTP"
+	} else {
+		fullURL = "https://" + req.Host + req.URL.String()
+		protocol = "HTTPS"
+	}
+	log.Printf("Intercepted %s request: %s %s (ID: %d)", protocol, req.Method, fullURL, p.Id())
 
 	p.Contents.Status = model.StatusStarted
 	p.Contents.Method = req.Method

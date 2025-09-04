@@ -159,7 +159,7 @@
 import {ref, watch, computed} from 'vue'
 import {useRequestsStore} from '../stores/requests'
 import {useRequestDetails} from '../composables/useRequestDetails'
-import {isAIRequest} from '../utils/aiDetector'
+import {isAIRequest} from '../utils/aiDetector.ts'
 import BodyViewer from './BodyViewer.vue'
 import ChatViewer from './ai-components/ChatViewer.vue'
 
