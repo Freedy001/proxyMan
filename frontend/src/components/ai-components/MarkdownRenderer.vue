@@ -18,7 +18,7 @@ const props = defineProps({
 })
 
 // 缓存渲染结果以提高性能
-const renderCache = new Map<string, string>()
+const renderCache = new Map()
 const cacheTimeout = 5 * 60 * 1000 // 5分钟缓存超时
 
 // 配置 marked
@@ -91,8 +91,8 @@ renderer.link = function (href, title, text) {
 }
 
 // HTML 转义函数
-function escapeHtml(text: string): string {
-  const map: Record<string, string> = {
+function escapeHtml(text) {
+  const map = {
     '&': '&amp;',
     '<': '&lt;',
     '>': '&gt;',
@@ -123,7 +123,7 @@ const renderedContent = computed(() => {
 
   // 检查缓存
   if (renderCache.has(props.content)) {
-    return renderCache.get(props.content)!
+    return renderCache.get(props.content)
   }
 
   try {
