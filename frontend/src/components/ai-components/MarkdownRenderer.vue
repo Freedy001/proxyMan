@@ -5,7 +5,7 @@
   ></div>
 </template>
 
-<script lang="ts" setup>
+<script setup>
 import {computed, onMounted} from 'vue'
 import {marked} from 'marked'
 import hljs from 'highlight.js'
@@ -26,8 +26,6 @@ const renderer = new marked.Renderer()
 
 // 自定义代码块渲染 - 优化版本
 renderer.code = function (code, infostring) {
-  console.log(code)
-
   // 处理代码参数，支持字符串和对象两种格式
   let codeText = ''
   let language = ''

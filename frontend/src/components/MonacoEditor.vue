@@ -176,7 +176,6 @@ function formatEditorContent() {
     // 格式化动作是异步的，返回一个 Promise
     formatAction.run().then(() => {
       // 4. 在格式化完成后，恢复原来的只读状态
-      console.log('格式化完成，恢复只读状态。');
       editor.updateOptions({readOnly: true});
     }).catch(error => {
       console.error('格式化失败:', error);
