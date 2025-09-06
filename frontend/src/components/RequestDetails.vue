@@ -29,14 +29,14 @@
       </div>
 
       <div class="details-body">
-        <div v-if="requestDetails.isLoading.value" class="loading-state">
+        <div v-if="requestDetailsManager.getIsLoading().value" class="loading-state">
           <div class="loading-spinner"></div>
           <div>Loading request data...</div>
         </div>
 
-        <div v-else-if="requestDetails.error.value" class="error-state">
+        <div v-else-if="requestDetailsManager.getError().value" class="error-state">
           <div class="error-icon">⚠️</div>
-          <div class="error-message">{{ requestDetails.error.value }}</div>
+          <div class="error-message">{{ requestDetailsManager.getError().value }}</div>
         </div>
 
         <div v-else class="tab-content">
@@ -61,7 +61,7 @@
           <div v-if="activeTab === 'headers'" class="tab-pane headers-tab-pane">
             <div class="details-section headers-section">
               <div class="details-section-title">Request Headers</div>
-              <div v-if="Object.keys(requestDetails.requestHeaders.value).length > 0" class="headers-table-container">
+              <div v-if="Object.keys(requestDetailsManager.getRequestHeaders().value).length > 0" class="headers-table-container">
                 <table class="headers-table">
                   <thead>
                   <tr>
@@ -70,7 +70,7 @@
                   </tr>
                   </thead>
                   <tbody>
-                  <tr v-for="(value, name) in requestDetails.requestHeaders.value" :key="name" class="header-row">
+                  <tr v-for="(value, name) in requestDetailsManager.getRequestHeaders().value" :key="name" class="header-row">
                     <td class="header-name">{{ name }}</td>
                     <td class="header-value">{{ formatHeaderValue(value) }}</td>
                   </tr>
@@ -85,7 +85,7 @@
             <!-- Response Headers Tab -->
             <div class="details-section headers-section">
               <div class="details-section-title">Response Headers</div>
-              <div v-if="Object.keys(requestDetails.responseHeaders.value).length > 0" class="headers-table-container">
+              <div v-if="Object.keys(requestDetailsManager.getResponseHeaders().value).length > 0" class="headers-table-container">
                 <table class="headers-table">
                   <thead>
                   <tr>
@@ -94,7 +94,7 @@
                   </tr>
                   </thead>
                   <tbody>
-                  <tr v-for="(value, name) in requestDetails.responseHeaders.value" :key="name" class="header-row">
+                  <tr v-for="(value, name) in requestDetailsManager.getResponseHeaders().value" :key="name" class="header-row">
                     <td class="header-name">{{ name }}</td>
                     <td class="header-value">{{ formatHeaderValue(value) }}</td>
                   </tr>
@@ -111,9 +111,9 @@
           <div v-if="activeTab === 'request'" class="tab-pane">
             <div class="details-section">
               <BodyViewer
-                  :body="requestDetails.requestBody.value"
-                  :headers="requestDetails.requestHeaders.value"
-                  :finished="requestDetails.requestState.value>=1"
+                  :body="requestDetailsManager.getRequestBody().value"
+                  :headers="requestDetailsManager.getRequestHeaders().value"
+                  :finished="requestDetailsManager.getRequestState().value>=1"
                   :view-mode="requestViewMode"
                   :auto-scroll="true"
                   label="Request Body"
@@ -126,9 +126,9 @@
           <div v-if="activeTab === 'response'" class="tab-pane">
             <div class="details-section">
               <BodyViewer
-                  :body="requestDetails.responseBody.value"
-                  :headers="requestDetails.responseHeaders.value"
-                  :finished="requestDetails.requestState.value>=3"
+                  :body="requestDetailsManager.getResponseBody().value"
+                  :headers="requestDetailsManager.getResponseHeaders().value"
+                  :finished="requestDetailsManager.getRequestState().value>=3"
                   :view-mode="responseViewMode"
                   :auto-scroll="false"
                   label="Response Body"
@@ -141,10 +141,10 @@
           <div v-if="activeTab === 'ai-chat'" class="tab-pane">
             <div class="details-section">
               <ChatViewer
-                  :request-body="requestDetails.requestBody.value"
-                  :response-body="requestDetails.responseBody.value"
+                  :request-body="requestDetailsManager.getRequestBody().value"
+                  :response-body="requestDetailsManager.getResponseBody().value"
                   :url="requestsStore.selectedRequest?.url || ''"
-                  :finished="requestDetails.requestState.value>=3"
+                  :finished="requestDetailsManager.getRequestState().value>=3"
               />
             </div>
           </div>
@@ -156,15 +156,20 @@
 </template>
 
 <script setup>
-import {ref, watch, computed} from 'vue'
+import {ref, watch, computed, onUnmounted} from 'vue'
 import {useRequestsStore} from '../stores/requests'
-import {useRequestDetails} from '../composables/useRequestDetails'
-import {isAIRequest} from '../utils/aiDetector.ts'
+import {RequestDetailsManager} from '../composables/RequestDetails'
+import {isAIRequest} from '../utils/AiDetector'
 import BodyViewer from './BodyViewer.vue'
 import ChatViewer from './ai-components/ChatViewer.vue'
 
 const requestsStore = useRequestsStore()
-const requestDetails = useRequestDetails()
+const requestDetailsManager = new RequestDetailsManager()
+
+// Cleanup on unmount
+onUnmounted(() => {
+  requestDetailsManager.disconnect()
+})
 
 const activeTab = ref('summary')
 const requestViewMode = ref('raw')
@@ -198,11 +203,11 @@ const tabs = computed(() => {
 // Watch for selected request changes
 watch(() => requestsStore.selectedRequestId, (newId, oldId) => {
   if (newId && newId !== oldId) {
-    requestDetails.clearDetails()
-    requestDetails.loadRequestDetails(newId)
+    requestDetailsManager.clearDetails()
+    requestDetailsManager.loadRequestDetails(newId)
     activeTab.value = 'summary'
   } else if (!newId) {
-    requestDetails.clearDetails()
+    requestDetailsManager.clearDetails()
   }
 }, {immediate: true})
 

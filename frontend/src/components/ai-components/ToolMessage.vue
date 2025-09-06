@@ -11,63 +11,59 @@
         <span class="expand-icon" :class="{ expanded: isExpanded }">▼</span>
       </div>
     </div>
-    
+
     <div v-if="isExpanded" class="tool-message-content">
-      <MarkdownRenderer 
-        v-if="message.role === 'tool'"
-        :content="getTextContent(message)"
-        class="tool-message-text"
+      <span v-if="message.tool_call_id" class="tool-call-id">ID: {{ message.tool_call_id }}</span>
+      <MarkdownRenderer
+          style="margin-top: 5px"
+          v-if="message.role === 'tool'"
+          :content="getTextContent(message)"
+          class="tool-message-text"
       />
       <div v-else class="tool-message-text">{{ getTextContent(message) }}</div>
     </div>
   </div>
 </template>
 
-<script setup>
-import { ref, computed } from 'vue'
+<script lang="ts" setup>
+import {ref, computed} from 'vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
+import {OpenAI} from "@/utils/LLMSModels.ts";
 
-const props = defineProps({
-  message: {
-    type: Object,
-    required: true
-  },
-  defaultExpanded: {
-    type: Boolean,
-    default: false
-  },
-  collapseThreshold: {
-    type: Number,
-    default: 500 // 字符数阈值，超过此数字自动折叠
-  }
-})
+const props = defineProps<{
+  message: OpenAI.ChatCompletionMessage
+}>()
 
-const isExpanded = ref(props.defaultExpanded)
+const isExpanded = ref(false)
 
 // 获取文本内容
-const getTextContent = (message) => {
+const getTextContent = (message: OpenAI.ChatCompletionMessage) => {
   if (typeof message.content === 'string') {
-    return message.content
+    try {
+      return JSON.stringify(JSON.parse(message.content), null, 2)
+    } catch (e) {
+      return message.content
+    }
   }
-  
+
   if (Array.isArray(message.content)) {
     const textParts = message.content
-      .filter(part => part.type === 'text')
-      .map(part => {
-        if (typeof part.text === 'string') {
-          return part.text
-        } else if (part.text && typeof part.text === 'object') {
-          try {
-            return JSON.stringify(part.text, null, 2)
-          } catch (err) {
-            return String(part.text)
+        .filter(part => part.type === 'text')
+        .map(part => {
+          if (typeof part.text === 'string') {
+            return part.text
+          } else if (part.text && typeof part.text === 'object') {
+            try {
+              return JSON.stringify(part.text, null, 2)
+            } catch (err) {
+              return String(part.text)
+            }
           }
-        }
-        return String(part.text || '')
-      })
+          return String(part.text || '')
+        })
     return textParts.join('\n')
   }
-  
+
   if (message.content && typeof message.content === 'object') {
     try {
       return JSON.stringify(message.content, null, 2)
@@ -75,7 +71,7 @@ const getTextContent = (message) => {
       return String(message.content)
     }
   }
-  
+
   return String(message.content || '')
 }
 
@@ -83,7 +79,7 @@ const getTextContent = (message) => {
 const contentLength = computed(() => {
   const text = getTextContent(props.message)
   const length = text.length
-  
+
   if (length > 1000) {
     return `${Math.round(length / 1000 * 10) / 10}K chars`
   }
@@ -93,8 +89,8 @@ const contentLength = computed(() => {
 // 内容预览
 const contentPreview = computed(() => {
   const text = getTextContent(props.message)
-  if (text.length <= 50) return ''
-  
+  if (text.length <= 50) return text
+
   // 获取前50个字符，在单词边界处截断
   let preview = text.substring(0, 50)
   const lastSpace = preview.lastIndexOf(' ')
@@ -104,18 +100,6 @@ const contentPreview = computed(() => {
   return preview + '...'
 })
 
-// 自动判断是否应该折叠
-const shouldAutoCollapse = computed(() => {
-  const text = getTextContent(props.message)
-  return text.length > props.collapseThreshold
-})
-
-// 初始化展开状态
-if (!props.defaultExpanded && shouldAutoCollapse.value) {
-  isExpanded.value = false
-} else if (!shouldAutoCollapse.value) {
-  isExpanded.value = true
-}
 
 // 控制方法
 const toggleExpanded = () => {
@@ -172,6 +156,15 @@ const toggleExpanded = () => {
   font-size: var(--font-size-small);
 }
 
+.tool-call-id {
+  font-size: var(--font-size-small);
+  color: var(--color-foreground-secondary);
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  background: var(--color-background-elevation-2);
+  padding: 3px 0;
+  border-radius: 3px;
+}
+
 .content-preview {
   color: var(--color-foreground-secondary);
   font-size: var(--font-size-small);
@@ -190,6 +183,7 @@ const toggleExpanded = () => {
 }
 
 .content-length {
+  margin-left: 10px;
   font-size: var(--font-size-small);
   color: var(--color-foreground-secondary);
   font-family: 'SFMono-Regular', Consolas, monospace;
@@ -258,7 +252,7 @@ const toggleExpanded = () => {
   .content-preview {
     max-width: 150px;
   }
-  
+
   .tool-message-header {
     padding: var(--spacing-xs) var(--spacing-sm);
   }

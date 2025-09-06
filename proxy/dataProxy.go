@@ -293,6 +293,10 @@ func (p *DataProxy) processBodyData(dataType model.DataType, cb DataCb) {
 			return
 		}
 
+		if bodyList.Front() == nil {
+			p.cond.Wait()
+		}
+
 		for e := bodyList.Front(); e != nil; e = e.Next() {
 			// list.List 的元素是 interface{}，需要进行类型断言
 			chunk, ok := e.Value.([]byte)

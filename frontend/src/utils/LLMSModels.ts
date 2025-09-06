@@ -33,8 +33,8 @@ export namespace OpenAI {
     id: string;
     type: 'function';
     function: {
-      name: string;
-      arguments: string;
+      name?: string;
+      arguments?: string;
     };
   }
 
@@ -96,7 +96,7 @@ export namespace OpenAI {
     object: string;
     created: number;
     model: string;
-    usage: Usage;
+    usage?: Usage;
     choices: ChunkChoice[];
   }
 
@@ -159,8 +159,8 @@ export namespace Anthropic {
   export type ContentBlock = TextBlock | ImageBlock | ToolUseBlock | ToolResultBlock;
 
   export type SystemMessage =
-      | { type: "text"; text: string }
-      | { type: "cache_control"; cache_type: "ephemeral" };
+    | { type: "text"; text: string }
+    | { type: "cache_control"; cache_type: "ephemeral" };
 
   // MODIFIED: system 类型从 `string | SystemMessage[]` 改为 `string`
   export interface MessageRequest {
@@ -263,11 +263,102 @@ export namespace Anthropic {
   }
 
   export type AnthropicChunk =
-      | MessageStartEvent
-      | ContentBlockStartEvent
-      | PingEvent
-      | ContentBlockDeltaEvent
-      | ContentBlockStopEvent
-      | MessageDeltaEvent
-      | MessageStopEvent;
+    | MessageStartEvent
+    | ContentBlockStartEvent
+    | PingEvent
+    | ContentBlockDeltaEvent
+    | ContentBlockStopEvent
+    | MessageDeltaEvent
+    | MessageStopEvent;
+}
+
+export namespace Gemini {
+  // Based on Google AI for Developers documentation
+
+  export interface GenerateContentRequest {
+    contents: Content[];
+    tools?: Tool[];
+    generationConfig?: GenerationConfig;
+    safetySettings?: SafetySetting[];
+  }
+
+  export interface Content {
+    role: 'user' | 'model';
+    parts: Part[];
+  }
+
+  export type Part =
+    | { text: string; }
+    | { inlineData: BlobPart; }
+    | { functionCall: FunctionCall; }
+    | { functionResponse: FunctionResponse; };
+
+
+  export interface BlobPart {
+    mimeType: string;
+    data: string; // base64 encoded
+  }
+
+  export interface FunctionCall {
+    name: string;
+    args: Record<string, any>;
+  }
+
+  export interface FunctionResponse {
+    name: string;
+    response: Record<string, any>;
+  }
+
+  export interface Tool {
+    functionDeclarations: FunctionDeclaration[];
+  }
+
+  export interface FunctionDeclaration {
+    name: string;
+    description: string;
+    parameters: Record<string, any>; // JSON Schema
+  }
+
+  export interface GenerationConfig {
+    temperature?: number;
+    topP?: number;
+    topK?: number;
+    candidateCount?: number;
+    maxOutputTokens?: number;
+    stopSequences?: string[];
+  }
+
+  export interface SafetySetting {
+    category: string;
+    threshold: string;
+  }
+
+  export interface GenerateContentResponse {
+    candidates: Candidate[];
+    usageMetadata?: UsageMetadata;
+  }
+
+  export interface ChunkResponse {
+    candidates: Candidate[];
+    usageMetadata?: UsageMetadata;
+  }
+
+  export interface Candidate {
+    content: Content;
+    finishReason: 'STOP' | 'MAX_TOKENS' | 'SAFETY' | 'RECITATION' | 'TOOL_CALLS' | 'OTHER' | null;
+    index: number;
+    safetyRatings?: SafetyRating[];
+    citationMetadata?: any;
+  }
+
+  export interface SafetyRating {
+    category: string;
+    probability: string;
+  }
+
+  export interface UsageMetadata {
+    promptTokenCount: number;
+    candidatesTokenCount: number;
+    totalTokenCount: number;
+  }
 }

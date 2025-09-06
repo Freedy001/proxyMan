@@ -24,16 +24,16 @@
     --color-border-focus: #007acc;
 
     /* 状态色彩 */
-    --color-accent: #003c60;
+    --color-accent: #007acc; /* 更现代的蓝色 */
     --color-error: #f14c4c;
     --color-warning: #ffb454;
     --color-success: #89d185;
     --color-info: #75beff;
 
     /* 交互状态 */
-    --color-background-hover: rgba(255, 255, 255, 0.04);
-    --color-background-selected: rgba(0, 122, 204, 0.15);
-    --color-background-active: rgba(0, 122, 204, 0.25);
+    --color-background-hover: rgba(255, 255, 255, 0.08); /* 稍微亮一点的悬停效果 */
+    --color-background-selected: rgba(0, 122, 204, 0.2);
+    --color-background-active: rgba(0, 122, 204, 0.3);
 
     /* HTTP 状态码色彩 */
     --color-status-1xx: #a5a5a5;
@@ -43,10 +43,10 @@
     --color-status-5xx: #ff6b6b;
 
     /* 字体尺寸 */
-    --font-size-small: 11px;
-    --font-size-normal: 12px;
-    --font-size-medium: 13px;
-    --font-size-large: 14px;
+    --font-size-small: 12px;
+    --font-size-normal: 13px;
+    --font-size-medium: 14px;
+    --font-size-large: 15px;
 
     /* 间距 */
     --spacing-xs: 4px;
@@ -56,13 +56,13 @@
     --spacing-xl: 24px;
 
     /* 阴影 */
-    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.2);
-    --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.3);
-    --shadow-lg: 0 8px 25px rgba(0, 0, 0, 0.4);
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 8px 25px rgba(0, 0, 0, 0.5);
 }
 
 body {
-    font-family: '.SFNSText-Regular', 'Helvetica Neue', 'Arial', sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
     font-size: var(--font-size-normal);
     background: var(--color-background);
     color: var(--color-foreground);
@@ -227,7 +227,7 @@ body {
 
 /* 搜索高亮 */
 .search-highlight {
-    background: rgba(255, 180, 84, 0.3);
+    background: rgba(215, 186, 125, 0.4);
     color: var(--color-foreground-accent);
     border-radius: 2px;
     padding: 1px 2px;
@@ -321,6 +321,10 @@ body {
 
 .text-warning {
     color: var(--color-warning);
+}
+
+.text-info {
+    color: var(--color-info);
 }
 
 /* 动画 */

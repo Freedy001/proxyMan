@@ -1,41 +1,40 @@
-import {defineStore} from 'pinia'
-import {computed, ref} from 'vue'
-import {useWebSocket} from '../composables/useWebSocket'
-import {useRequestFiltering} from '../composables/useRequestFiltering'
+import { defineStore } from 'pinia'
+import { computed, ref, onUnmounted } from 'vue'
+import { WebSocketManager } from '../composables/WebSocket'
+import { RequestFilteringManager } from '../composables/RequestFiltering'
 
 export const useRequestsStore = defineStore('requests', () => {
+  // State
   const requests = ref([])
   const selectedRequestId = ref(null)
   const sortColumn = ref('id')
   const sortOrder = ref('desc')
+  
+  // Managers
+  const wsManager = new WebSocketManager()
+  const filterManager = new RequestFilteringManager(requests)
+  
+  // Cleanup on unmount
+  onUnmounted(() => {
+    wsManager.disconnect()
+  })
 
-  const {
-    isConnected,
-    isConnecting,
-    error: connectionError,
-    connect: connectWS,
-    disconnect: disconnectWS
-  } = useWebSocket()
-
-  const {
-    searchQuery,
-    statusFilter,
-    contentTypeFilter,
-    filteredRequests,
-    setSearchQuery,
-    setStatusFilter,
-    setContentTypeFilter,
-    clearFilters
-  } = useRequestFiltering(requests)
-
+  // Computed properties
   const selectedRequest = computed(() => {
     return requests.value.find(req => req.id === selectedRequestId.value) || null
   })
 
   const sortedAndFilteredRequests = computed(() => {
-    return [...filteredRequests.value].sort((a, b) => {
+    // Use slice() for better performance with large arrays
+    const filtered = filterManager.filteredRequests.value.slice()
+    return filtered.sort((a, b) => {
       const aVal = a[sortColumn.value]
       const bVal = b[sortColumn.value]
+
+      // Handle null/undefined values
+      if (aVal == null && bVal == null) return 0
+      if (aVal == null) return sortOrder.value === 'asc' ? -1 : 1
+      if (bVal == null) return sortOrder.value === 'asc' ? 1 : -1
 
       let comparison = 0
       if (aVal < bVal) comparison = -1
@@ -47,52 +46,75 @@ export const useRequestsStore = defineStore('requests', () => {
 
   const requestCount = computed(() => requests.value.length)
 
+  // WebSocket connection handlers
   const connect = () => {
-    connectWS('/ws', handleRequestSummary, handleConnectionError, true)
+    wsManager.connect('/ws', handleRequestSummary, handleConnectionError, true)
   }
 
   const disconnect = () => {
-    disconnectWS()
+    wsManager.disconnect()
   }
 
+  // Handle incoming request summaries from WebSocket
   const handleRequestSummary = (summary) => {
+    // Validate incoming data
+    if (!summary || !summary.id) {
+      console.warn('Invalid request summary received:', summary)
+      return
+    }
+
     const existingIndex = requests.value.findIndex(req => req.id === summary.id)
 
     if (existingIndex >= 0) {
-      // Update existing request
-      requests.value[existingIndex] = {
-        ...requests.value[existingIndex], ...summary,
+      // Update existing request with new data
+      const updatedRequest = {
+        ...requests.value[existingIndex],
+        ...summary,
         duration: calculateDuration(summary.startTime, summary.endTime)
       }
+      requests.value.splice(existingIndex, 1, updatedRequest)
     } else {
-      // Add new request
-      requests.value.unshift({
+      // Add new request to the beginning of the list
+      const newRequest = {
         ...summary,
-        // Add calculated fields
         duration: calculateDuration(summary.startTime, summary.endTime),
         isNew: true
-      })
+      }
+      
+      requests.value.unshift(newRequest)
 
-      // Remove "new" flag after animation
+      // Remove "new" flag after animation completes
       setTimeout(() => {
-        const newIndex = requests.value.findIndex(req => req.id === summary.id)
-        if (newIndex >= 0) {
-          requests.value[newIndex].isNew = false
+        const index = requests.value.findIndex(req => req.id === summary.id)
+        if (index >= 0) {
+          requests.value[index].isNew = false
         }
       }, 500)
+    }
+    
+    // Limit the number of requests to prevent memory issues
+    if (requests.value.length > 10000) {
+      requests.value.splice(5000) // Remove older requests
     }
   }
 
   const handleConnectionError = (error) => {
-    console.error('Connection error:', error)
+    console.error('WebSocket connection error:', error)
   }
 
+  // Utility function to calculate request duration
   const calculateDuration = (startTime, endTime) => {
     if (!startTime || !endTime) return null
 
     try {
       const start = new Date(startTime)
       const end = new Date(endTime)
+      
+      // Validate dates
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+        return null
+      }
+      
       const duration = end - start
 
       if (duration < 1000) {
@@ -101,10 +123,12 @@ export const useRequestsStore = defineStore('requests', () => {
         return `${(duration / 1000).toFixed(2)}s`
       }
     } catch (e) {
+      console.error('Error calculating duration:', e)
       return null
     }
   }
 
+  // Action methods
   const selectRequest = (requestId) => {
     selectedRequestId.value = requestId
   }
@@ -116,18 +140,22 @@ export const useRequestsStore = defineStore('requests', () => {
 
   const setSorting = (column) => {
     if (sortColumn.value === column) {
+      // Toggle sort order
       if (sortOrder.value === 'desc') {
         sortOrder.value = 'asc'
-        return
+      } else {
+        // Reset to default sorting
+        sortColumn.value = 'id'
+        sortOrder.value = 'desc'
       }
-      sortColumn.value = 'id'
-      sortOrder.value = 'desc'
     } else {
+      // Set new sort column
       sortColumn.value = column
       sortOrder.value = 'desc'
     }
   }
 
+  // Utility methods for UI styling
   const getStatusClass = (statusCode) => {
     if (!statusCode) return ''
 
@@ -142,18 +170,12 @@ export const useRequestsStore = defineStore('requests', () => {
 
   const getMethodClass = (method) => {
     switch (method?.toUpperCase()) {
-      case 'GET':
-        return 'method-get'
-      case 'POST':
-        return 'method-post'
-      case 'PUT':
-        return 'method-put'
-      case 'DELETE':
-        return 'method-delete'
-      case 'PATCH':
-        return 'method-patch'
-      default:
-        return ''
+      case 'GET': return 'method-get'
+      case 'POST': return 'method-post'
+      case 'PUT': return 'method-put'
+      case 'DELETE': return 'method-delete'
+      case 'PATCH': return 'method-patch'
+      default: return ''
     }
   }
 
@@ -169,6 +191,11 @@ export const useRequestsStore = defineStore('requests', () => {
 
     try {
       const date = new Date(timestamp)
+      // Validate date
+      if (isNaN(date.getTime())) {
+        return ''
+      }
+      
       return date.toLocaleTimeString('en-US', {
         hour12: false,
         hour: '2-digit',
@@ -176,10 +203,12 @@ export const useRequestsStore = defineStore('requests', () => {
         second: '2-digit'
       })
     } catch (e) {
+      console.error('Error formatting time:', e)
       return ''
     }
   }
 
+  // Return store interface
   return {
     // State
     requests,
@@ -187,22 +216,22 @@ export const useRequestsStore = defineStore('requests', () => {
     sortColumn,
     sortOrder,
 
-    // Computed
+    // Computed properties
     selectedRequest,
     sortedAndFilteredRequests,
     requestCount,
-    isConnected,
-    isConnecting,
-    connectionError,
+    isConnected: wsManager.isConnected,
+    isConnecting: wsManager.isConnecting,
+    connectionError: wsManager.error,
 
     // Filtering
-    searchQuery,
-    statusFilter,
-    contentTypeFilter,
-    setSearchQuery,
-    setStatusFilter,
-    setContentTypeFilter,
-    clearFilters,
+    searchQuery: filterManager.getSearchQuery(),
+    statusFilter: filterManager.getStatusFilter(),
+    contentTypeFilter: filterManager.getContentTypeFilter(),
+    setSearchQuery: filterManager.setSearchQuery.bind(filterManager),
+    setStatusFilter: filterManager.setStatusFilter.bind(filterManager),
+    setContentTypeFilter: filterManager.setContentTypeFilter.bind(filterManager),
+    clearFilters: filterManager.clearFilters.bind(filterManager),
 
     // Actions
     connect,

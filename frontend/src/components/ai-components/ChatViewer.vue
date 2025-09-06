@@ -13,10 +13,10 @@
       <div class="chat-header">
         <div class="chat-title">
           <span class="provider-badge"
-                :class="'provider-'+aiProvider?.name.toLowerCase() ?? 'generic'">
+                :class="'provider-'+(aiProvider?.name.toLowerCase() ?? 'generic')">
             {{ aiProvider?.name ?? 'Unknown' }}
           </span>
-          <span class="model-info" v-if="modelName">{{ modelName }}</span>
+          <span class="model-info" v-if="requestData?.model">{{ requestData?.model }}</span>
         </div>
         <div class="chat-controls">
           <button
@@ -26,7 +26,7 @@
               title="Toggle metadata"
           >
             <span class="control-icon">📊</span>
-            Metadata
+            <span class="control-text">Metadata</span>
           </button>
           <button
               class="control-button"
@@ -35,7 +35,7 @@
               title="Toggle auto-scroll"
           >
             <span class="control-icon">📄</span>
-            Auto-scroll
+            <span class="control-text">Auto-scroll</span>
           </button>
         </div>
       </div>
@@ -55,17 +55,13 @@
             <label>Max Tokens:</label>
             <span>{{ requestData.max_tokens }}</span>
           </div>
-          <div v-if="responseData?.usage" class="metadata-item">
+          <div v-if="usage" class="metadata-item">
             <label>Token Usage:</label>
-            <span>{{ formatTokenUsage(responseData.usage) }}</span>
+            <span>{{ formatTokenUsage(usage) }}</span>
           </div>
           <div v-if="requestData?.stream !== undefined" class="metadata-item">
             <label>Stream:</label>
             <span>{{ requestData.stream ? 'Yes' : 'No' }}</span>
-          </div>
-          <div v-if="responseData?.id" class="metadata-item">
-            <label>Request ID:</label>
-            <span class="monospace">{{ responseData.id }}</span>
           </div>
         </div>
       </div>
@@ -74,7 +70,7 @@
       <div class="messages-container" ref="messagesContainer">
         <!-- System Message -->
         <div v-if="systemMessage" class="message system-message">
-          <div class="message-header">
+          <div class="message-header" style="justify-content: center">
             <span class="message-role">System</span>
           </div>
           <div class="message-content">
@@ -89,35 +85,41 @@
             class="message"
             :class="getMessageClass(message)"
         >
-          <div class="message-header">
-            <span class="message-role">{{ getRoleDisplay(message.role) }}</span>
-            <span v-if="message.timestamp" class="message-timestamp">
-              {{ formatTimestamp(message.timestamp) }}
+          <div class="message-header" :style="(message.role==='user')?'justify-content: right':'' "  >
+            <span class="message-role">
+              {{ message.role.charAt(0).toUpperCase() + message.role.substring(1) }}
             </span>
           </div>
 
           <div class="message-content">
-            <!-- Text Content -->
-            <div v-if="getTextContent(message)" class="message-text">
+            <!-- 图片内容 -->
+            <div v-if="hasImageContent(message)" class="message-images">
+              <ImageMessage :content="getImageContent(message)" />
+            </div>
+            
+            <!-- 文本内容 -->
+            <div v-if="message.content && getTextContent(message)" class="message-text">
               <!-- 使用折叠组件显示工具回复 -->
-              <CollapsibleToolMessage
+              <ToolMessage
                   v-if="message.role === 'tool'"
                   :message="message"
                   class="message-text-content"
               />
+
               <!-- 使用 Markdown 渲染 AI 助手回复，其他消息保持纯文本 -->
               <MarkdownRenderer
                   v-else-if="message.role === 'assistant'"
                   :content="getTextContent(message)"
                   class="message-text-content"
               />
-              <div v-else class="message-text-content">{{ getTextContent(message) }}</div>
+
+              <div v-else class="message-text-content" style="">{{ getTextContent(message) }}</div>
             </div>
 
             <!-- Tool Calls -->
-            <div v-if="message.toolCalls && message.toolCalls.length > 0" class="tool-calls">
+            <div v-if="message.tool_calls && message.tool_calls.length > 0" class="tool-calls">
               <ToolCallViewer
-                  v-for="(toolCall, idx) in message.toolCalls"
+                  v-for="(toolCall, idx) in message.tool_calls"
                   :key="idx"
                   :tool-call="toolCall"
               />
@@ -147,13 +149,12 @@
 
 <script lang="ts" setup>
 import {computed, nextTick, onMounted, ref, watch} from 'vue'
-import {getAIProvider, isStreamResponse} from '@/utils/aiDetector.ts'
+import {getAIProvider, isStreamResponse} from '@/utils/AiDetector.ts'
 import ToolCallViewer from './ToolCallViewer.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
-import CollapsibleToolMessage from './CollapsibleToolMessage.vue'
-import type {OpenAI} from "@/utils/LLMSModels.ts"
-import {languages} from "monaco-editor";
-import json = languages.json;
+import ToolMessage from './ToolMessage.vue'
+import ImageMessage from './ImageMessage.vue'
+import {OpenAI} from "@/utils/LLMSModels.ts"
 
 const props = defineProps({
   requestBody: {
@@ -175,11 +176,11 @@ const props = defineProps({
 })
 
 // Refs
-const messagesContainer = ref(null)
+const messagesContainer = ref<Element>()
 const showMetadata = ref(false)
 const autoScroll = ref(true)
 const error = ref('')
-const usage = ref(null)
+const usage = ref<OpenAI.Usage | null>(null)
 
 // 获取 AI Provider
 const aiProvider = getAIProvider(props.url)
@@ -188,19 +189,12 @@ const aiProvider = getAIProvider(props.url)
 const requestData = computed<OpenAI.ChatCompletionRequest | null>(() => {
   try {
     if (!props.requestBody || !aiProvider) return null
-    console.log(JSON.parse(props.requestBody))
-    console.log(aiProvider.parseRequest(props.requestBody))
     return aiProvider.parseRequest(props.requestBody)
   } catch (err) {
-    error.value = `Failed to parse AI request: ${err.message}`
-    console.log(err)
+    console.error(err)
+    error.value = `Failed to parse AI request: ${(err as Error).message}`
     return null
   }
-})
-
-// 模型名称
-const modelName = computed(() => {
-  return requestData.value?.model || responseData.value?.model || ''
 })
 
 // 系统消息
@@ -210,10 +204,10 @@ const systemMessage = computed(() => {
 })
 
 // 解析流式数据
-const parseStreamData = (responseBody): OpenAI.Chunk[] => {
+const parseStreamData = (responseBody: string): OpenAI.Chunk[] => {
   if (!responseBody || !aiProvider) return []
 
-  const chunks: OpenAI.Chunk = []
+  const chunks: OpenAI.Chunk[] = []
 
   for (const line of responseBody.split('\n')) {
     if (line.startsWith('data: ')) {
@@ -229,22 +223,23 @@ const parseStreamData = (responseBody): OpenAI.Chunk[] => {
   return chunks
 }
 
+interface Message extends OpenAI.ChatCompletionMessage {
+  id: string
+  isStreaming?: boolean
+}
+
 // 显示的消息列表
-const displayMessages: OpenAI.ChatCompletionRequest[] = computed<OpenAI.ChatCompletionRequest[]>(() => {
-  if (!computed(() => {
-    return requestData.value
-  }).value) return []
-  const messages: OpenAI.ChatCompletionRequest = []
+const displayMessages = computed<Message[]>(() => {
+  const messages: Message[] = []
+
   try {
     // 添加请求消息
-    if (requestData.value?.messages) {
+    if (requestData?.value?.messages) {
       requestData.value.messages.forEach(msg => {
         if (msg.role !== 'system') {
           messages.push({
-            ...msg,
             id: `req-${messages.length}`,
-            toolCalls: msg.tool_calls || [],
-            timestamp: Date.now()
+            ...msg,
           })
         }
       })
@@ -254,16 +249,15 @@ const displayMessages: OpenAI.ChatCompletionRequest[] = computed<OpenAI.ChatComp
     if (isStreamResponse(props.responseBody)) {
       const streamChunks = parseStreamData(props.responseBody)
       let assistantMessage = {
+        id: 'stream-assistant',
         role: 'assistant',
         content: '',
-        id: 'stream-assistant',
-        toolCalls: [],
-        timestamp: Date.now(),
+        tool_calls: [] as OpenAI.DeltaToolCall[],
         isStreaming: !props.finished
       }
 
       // 用于累积工具调用的临时存储
-      const toolCallsMap = new Map()
+      const toolCallsMap = new Map<number, OpenAI.DeltaToolCall>()
 
       // 合并流式数据块
       streamChunks.forEach(chunk => {
@@ -277,37 +271,43 @@ const displayMessages: OpenAI.ChatCompletionRequest[] = computed<OpenAI.ChatComp
         // 处理工具调用
         if (chunk.choices?.[0]?.delta?.tool_calls) {
           chunk.choices[0].delta.tool_calls.forEach(toolCall => {
-            if (toolCall.index !== undefined) {
-              const existingCall = toolCallsMap.get(toolCall.index) || {
-                type: 'function',
-                id: toolCall.id || '',
-                function: {name: '', arguments: ''}
-              }
-
-              if (toolCall.function?.name) {
-                existingCall.function.name = toolCall.function.name
-              }
-              if (toolCall.function?.arguments) {
-                existingCall.function.arguments += toolCall.function.arguments
-              }
-              if (toolCall.id) {
-                existingCall.id = toolCall.id
-              }
-
-              toolCallsMap.set(toolCall.index, existingCall)
+            if (toolCall.index === undefined) {
+              return
             }
+
+            const existingCall = toolCallsMap.get(toolCall.index) || {
+              type: 'function',
+              id: toolCall.id || '',
+              function: {name: '', arguments: ''}
+            } as OpenAI.DeltaToolCall
+
+            if (toolCall.function?.name) {
+              existingCall.function.name = toolCall.function.name
+            }
+
+            if (toolCall.function?.arguments) {
+              existingCall.function.arguments += toolCall.function.arguments
+            }
+
+            if (toolCall.id) {
+              existingCall.id = toolCall.id
+            }
+
+            toolCallsMap.set(toolCall.index, existingCall)
           })
         }
       })
 
       // 将累积的工具调用添加到消息中
       if (toolCallsMap.size > 0) {
-        assistantMessage.toolCalls = Array.from(toolCallsMap.values())
+        assistantMessage.tool_calls = Array.from(toolCallsMap.values())
       }
 
-      if (assistantMessage.content || assistantMessage.toolCalls.length > 0) {
-        messages.push(assistantMessage)
+
+      if (assistantMessage.content || assistantMessage.tool_calls.length > 0) {
+        messages.push(assistantMessage as Message)
       }
+
     } else {
       // 处理普通响应
       if (props.responseBody) {
@@ -317,16 +317,14 @@ const displayMessages: OpenAI.ChatCompletionRequest[] = computed<OpenAI.ChatComp
           if (choice.message) {
             messages.push({
               ...choice.message,
-              id: `resp-${idx}`,
-              toolCalls: choice.message.tool_calls || [],
-              timestamp: responseData.value.created ? responseData.value.created * 1000 : Date.now()
-            })
+              id: `resp-${idx}`
+            } as Message)
           }
         })
       }
     }
   } catch (e) {
-    error.value = `Failed to parse AI response: ${e.message}`
+    error.value = `Failed to parse AI response: ${(e as Error).message}`
     console.log(e)
   }
 
@@ -334,38 +332,23 @@ const displayMessages: OpenAI.ChatCompletionRequest[] = computed<OpenAI.ChatComp
 })
 
 // 消息样式类
-const getMessageClass = (message) => {
+const getMessageClass = (message: Message) => {
   const classes = [`${message.role}-message`]
 
   if (message.isStreaming) {
     classes.push('streaming')
   }
 
-  if (message.toolCalls && message.toolCalls.length > 0) {
+  if (message.tool_calls && message.tool_calls.length > 0) {
     classes.push('has-tools')
   }
 
   return classes
 }
 
-// 角色显示名称
-const getRoleDisplay = (role) => {
-  switch (role) {
-    case 'user':
-      return 'User'
-    case 'assistant':
-      return 'Assistant'
-    case 'system':
-      return 'System'
-    case 'tool':
-      return 'Tool'
-    default:
-      return role
-  }
-}
 
 // 获取文本内容
-const getTextContent = (message) => {
+const getTextContent = (message: Message) => {
   if (typeof message.content === 'string') {
     return message.content
   }
@@ -380,13 +363,35 @@ const getTextContent = (message) => {
   return ''
 }
 
-// 格式化时间戳
-const formatTimestamp = (timestamp) => {
-  return new Date(timestamp).toLocaleTimeString()
+// 检查消息是否包含图片
+const hasImageContent = (message: Message) => {
+  if (typeof message.content === 'string') {
+    return false
+  }
+  
+  if (Array.isArray(message.content)) {
+    return message.content.some(part => part.type === 'image_url')
+  }
+  
+  return false
 }
 
+// 获取图片内容
+const getImageContent = (message: Message) => {
+  if (typeof message.content === 'string') {
+    return []
+  }
+  
+  if (Array.isArray(message.content)) {
+    return message.content
+  }
+  
+  return []
+}
+
+
 // 格式化 token 使用量
-const formatTokenUsage = (usage) => {
+const formatTokenUsage = (usage: OpenAI.Usage) => {
   if (!usage) return ''
 
   const parts = []
@@ -413,7 +418,9 @@ const toggleAutoScroll = () => {
 const scrollToBottom = () => {
   if (messagesContainer.value && autoScroll.value) {
     nextTick(() => {
-      messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+      if (messagesContainer.value && autoScroll.value) {
+        messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+      }
     })
   }
 }
@@ -444,6 +451,7 @@ onMounted(() => {
   flex-direction: column;
   height: 100%;
   background: var(--color-background);
+  container-type: inline-size;
 }
 
 .empty-chat {
@@ -477,7 +485,6 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
-  container-type: inline-size;
 }
 
 .chat-header {
@@ -488,12 +495,15 @@ onMounted(() => {
   background: var(--color-background-elevation-2);
   border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
+  gap: var(--spacing-sm);
 }
 
 .chat-title {
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
+  min-width: 0;
+  flex-shrink: 1;
 }
 
 .provider-badge {
@@ -503,6 +513,7 @@ onMounted(() => {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  flex-shrink: 0;
 }
 
 .provider-openai {
@@ -524,11 +535,15 @@ onMounted(() => {
   font-family: 'SFMono-Regular', Consolas, monospace;
   font-size: var(--font-size-small);
   color: var(--color-foreground-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chat-controls {
   display: flex;
-  gap: var(--spacing-sm);
+  gap: var(--spacing-xs);
+  flex-shrink: 0;
 }
 
 .control-button {
@@ -558,6 +573,17 @@ onMounted(() => {
   border-color: var(--color-accent);
 }
 
+.control-text {
+  display: none;
+}
+
+/* 在较大屏幕上显示按钮文本 */
+@media (min-width: 480px) {
+  .control-text {
+    display: inline;
+  }
+}
+
 .metadata-panel {
   padding: var(--spacing-md);
   background: var(--color-background-elevation-1);
@@ -566,9 +592,8 @@ onMounted(() => {
 }
 
 .metadata-grid {
-  display: flex;
-  flex-direction: column;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: var(--spacing-sm);
 }
 
@@ -576,16 +601,20 @@ onMounted(() => {
   margin: 0 10px;
   display: flex;
   justify-content: space-between;
+  align-items: center;
 }
 
 .metadata-item label {
   font-weight: 500;
   color: var(--color-foreground-secondary);
+  margin-right: var(--spacing-xs);
 }
 
 .metadata-item span {
   font-family: 'SFMono-Regular', Consolas, monospace;
   font-size: var(--font-size-small);
+  text-align: right;
+  flex: 1;
 }
 
 .monospace {
@@ -595,26 +624,17 @@ onMounted(() => {
 .messages-container {
   flex: 1;
   overflow-y: auto;
-  padding: var(--spacing-lg) var(--spacing-md);
+  padding: var(--spacing-md);
   display: flex;
   flex-direction: column;
   gap: var(--spacing-md);
-
-  /* 优化大屏幕体验 */
-  @media (min-width: 1024px) {
-    padding: var(--spacing-lg) var(--spacing-xl);
-  }
-
-  /* 移动端优化 */
-  @media (max-width: 768px) {
-    padding: var(--spacing-md) var(--spacing-sm);
-  }
 }
 
 .message {
   display: flex;
   flex-direction: column;
-  max-width: min(98%, 1400px);
+  width: 100%;
+  max-width: 100%;
   margin-bottom: var(--spacing-md);
   animation: slideInMessage 0.3s ease-out;
 }
@@ -630,31 +650,23 @@ onMounted(() => {
   }
 }
 
+/* 消息对齐和宽度 */
 .system-message {
+  width: 100%;
   align-self: center;
-  max-width: min(95%, 1200px);
 }
 
 .user-message {
   align-self: flex-end;
-  max-width: min(90%, 1000px);
 }
 
-.assistant-message {
-  align-self: flex-start;
-  max-width: min(98%, 1400px);
-}
-
-.tool-message {
-  align-self: flex-start;
-  max-width: min(95%, 1200px);
-}
-
+.assistant-message,
+.tool-message,
 .error-message {
-  align-self: center;
-  max-width: min(95%, 1200px);
+  align-self: flex-start;
 }
 
+/* 消息内容样式 */
 .message-header {
   display: flex;
   justify-content: space-between;
@@ -688,19 +700,16 @@ onMounted(() => {
   color: var(--color-error);
 }
 
-.message-timestamp {
-  color: var(--color-foreground-disabled);
-  font-size: var(--font-size-small);
-}
-
 .message-content {
   background: var(--color-background-elevation-1);
   border: 1px solid var(--color-border);
   border-radius: 8px;
-  padding: 10px;
+  padding: var(--spacing-sm);
   display: flex;
   flex-direction: column;
   gap: var(--spacing-sm);
+  max-width: 100%;
+  word-wrap: break-word;
 }
 
 .user-message .message-content {
@@ -715,7 +724,6 @@ onMounted(() => {
   border-style: dashed;
 }
 
-/*noinspection CssUnresolvedCustomProperty*/
 .error-message .message-content {
   background: var(--color-error-bg);
   border-color: var(--color-error);
@@ -728,6 +736,15 @@ onMounted(() => {
   position: relative;
   max-width: 100%;
   overflow-wrap: break-word;
+}
+
+.message-images {
+  margin-bottom: var(--spacing-sm);
+}
+
+.message-text + .message-images,
+.message-images + .message-text {
+  margin-top: var(--spacing-sm);
 }
 
 .message-text-content {
@@ -791,107 +808,91 @@ onMounted(() => {
   }
 }
 
-/* 响应式宽度优化 */
-@media (min-width: 1440px) {
-  .message {
-    max-width: min(95%, 1600px);
+/* 响应式设计 - 小屏幕 */
+@media (max-width: 479px) {
+  .chat-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--spacing-xs);
   }
 
-  .assistant-message {
-    max-width: min(95%, 1600px);
+  .chat-controls {
+    justify-content: flex-end;
   }
 
-  .system-message,
-  .tool-message,
-  .error-message {
-    max-width: min(92%, 1400px);
+  .control-button {
+    padding: var(--spacing-xs) var(--spacing-sm);
   }
 
-  .user-message {
-    max-width: min(88%, 1200px);
-  }
-}
-
-@media (max-width: 768px) {
-  .message {
-    max-width: 100%;
-  }
-
-  .system-message,
-  .user-message,
-  .assistant-message,
-  .tool-message,
-  .error-message {
-    max-width: 100%;
-  }
-
-  .user-message {
-    align-self: stretch;
-  }
-
-  .assistant-message {
-    align-self: stretch;
-  }
-}
-
-@media (min-width: 769px) and (max-width: 1023px) {
-  .message {
-    max-width: min(96%, 1000px);
-  }
-
-  .assistant-message {
-    max-width: min(96%, 1000px);
-  }
-}
-
-/* 容器查询支持 - 基于ChatViewer容器宽度的响应式调整 */
-@container (min-width: 800px) {
-  .message {
-    max-width: min(95%, 1400px);
-  }
-
-  .assistant-message {
-    max-width: min(95%, 1400px);
+  .metadata-grid {
+    grid-template-columns: 1fr;
   }
 
   .messages-container {
-    padding-left: var(--spacing-xl);
-    padding-right: var(--spacing-xl);
+    padding: var(--spacing-sm);
+  }
+
+  .message-content {
+    padding: var(--spacing-xs);
   }
 }
 
-@container (min-width: 1200px) {
-  .message {
-    max-width: min(92%, 1600px);
-  }
-
-  .assistant-message {
-    max-width: min(92%, 1600px);
-  }
-
+/* 响应式设计 - 中等屏幕 */
+@media (min-width: 480px) and (max-width: 768px) {
   .messages-container {
-    padding-left: calc(var(--spacing-xl) * 1.5);
-    padding-right: calc(var(--spacing-xl) * 1.5);
+    padding: var(--spacing-md);
+  }
+
+  .metadata-grid {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   }
 }
 
-@container (max-width: 600px) {
-  .message {
-    max-width: 100%;
-  }
-
-  .system-message,
-  .user-message,
-  .assistant-message,
-  .tool-message,
-  .error-message {
-    max-width: 100%;
-    align-self: stretch;
-  }
-
+/* 响应式设计 - 大屏幕 */
+@media (min-width: 769px) {
   .messages-container {
-    padding-left: var(--spacing-sm);
-    padding-right: var(--spacing-sm);
+    padding: var(--spacing-lg);
+  }
+
+  .message-content {
+    padding: var(--spacing-md);
+  }
+
+  .metadata-grid {
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  }
+}
+
+.messages-container {
+  padding: var(--spacing-lg) var(--spacing-xl);
+}
+
+.message {
+  max-width: 90%;
+}
+
+.user-message {
+  max-width: 90%;
+}
+
+.assistant-message {
+  max-width: 90%;
+}
+
+/* 容器查询 - 基于组件宽度的响应式 */
+@container (min-width: 400px) {
+  .metadata-grid {
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  }
+}
+
+@container (min-width: 600px) {
+  .metadata-grid {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  }
+
+  .message-content {
+    padding: var(--spacing-md);
   }
 }
 </style>

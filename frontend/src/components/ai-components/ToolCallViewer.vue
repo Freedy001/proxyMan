@@ -1,202 +1,59 @@
 <template>
   <div class="tool-call-viewer" :class="toolCallClass">
-    <div class="tool-call-header" @click="toggleExpanded">
+    <div class="tool-call-header" @click="isExpanded = !isExpanded">
       <div class="tool-call-title">
         <span class="tool-icon">🔧</span>
+        <span class="tool-type-badge">{{ props.toolCall.type }}</span>
         <span class="tool-name">{{ toolName }}</span>
-        <span class="tool-type-badge">{{ toolType }}</span>
       </div>
       <div class="tool-call-controls">
-        <span v-if="executionTime" class="execution-time">{{ executionTime }}ms</span>
         <span class="expand-icon" :class="{ expanded: isExpanded }">▼</span>
       </div>
     </div>
-    
+
     <div v-if="isExpanded" class="tool-call-content">
       <!-- Tool Input/Arguments -->
-      <div v-if="hasInput" class="tool-section">
-        <div class="section-title">
-          <span class="section-icon">📥</span>
-          Input
-        </div>
-        <div class="section-content">
-          <pre class="json-content">{{ formattedInput }}</pre>
+      <div v-if=" props.toolCall.function?.arguments " class="tool-section">
+        <span v-if="props.toolCall.id" class="tool-call-id">ID: {{ props.toolCall.id }}</span>
+
+        <div class="section-content" style="margin-top: 10px">
+          <pre class="json-content">{{ formatJson(props.toolCall.function?.arguments) }}</pre>
         </div>
       </div>
-      
-      <!-- Tool Output/Result -->
-      <div v-if="hasOutput" class="tool-section">
-        <div class="section-title">
-          <span class="section-icon">📤</span>
-          Output
-        </div>
-        <div class="section-content">
-          <pre class="json-content">{{ formattedOutput }}</pre>
-        </div>
-      </div>
-      
-      <!-- Error Information -->
-      <div v-if="hasError" class="tool-section error-section">
-        <div class="section-title">
-          <span class="section-icon">❌</span>
-          Error
-        </div>
-        <div class="section-content">
-          <div class="error-message">{{ errorMessage }}</div>
-        </div>
-      </div>
-      
-      <!-- Additional Metadata -->
-      <div v-if="hasMetadata" class="tool-section metadata-section">
-        <div class="section-title">
-          <span class="section-icon">📊</span>
-          Metadata
-        </div>
-        <div class="section-content">
-          <div class="metadata-grid">
-            <div v-if="toolCall.id" class="metadata-item">
-              <label>ID:</label>
-              <span class="monospace">{{ toolCall.id }}</span>
-            </div>
-            <div v-if="toolCall.type" class="metadata-item">
-              <label>Type:</label>
-              <span>{{ toolCall.type }}</span>
-            </div>
-            <div v-if="toolCall.index !== undefined" class="metadata-item">
-              <label>Index:</label>
-              <span>{{ toolCall.index }}</span>
-            </div>
-          </div>
-        </div>
-      </div>
+
     </div>
   </div>
 </template>
 
-<script setup>
-import { ref, computed } from 'vue'
+<script lang="ts" setup>
+import {ref, computed} from 'vue'
+import {OpenAI} from "@/utils/LLMSModels.js";
 
-const props = defineProps({
-  toolCall: {
-    type: Object,
-    required: true
-  },
-  defaultExpanded: {
-    type: Boolean,
-    default: false
-  }
-})
+const props = defineProps<{
+  toolCall: OpenAI.ToolCall;
+  defaultExpanded?: boolean;
+}>();
 
 const isExpanded = ref(props.defaultExpanded)
-
-// 工具调用类型检测
-const toolType = computed(() => {
-  if (props.toolCall.type) {
-    return props.toolCall.type
-  }
-  
-  // 推断类型
-  if (props.toolCall.function) {
-    return 'function'
-  }
-  
-  if (props.toolCall.name && props.toolCall.input) {
-    return 'tool_use'
-  }
-  
-  return 'unknown'
-})
 
 // 工具名称
 const toolName = computed(() => {
   if (props.toolCall.function?.name) {
     return props.toolCall.function.name
   }
-  
-  if (props.toolCall.name) {
-    return props.toolCall.name
-  }
-  
+
   return 'Unknown Tool'
 })
 
 // CSS 类名
 const toolCallClass = computed(() => {
-  const classes = [`tool-type-${toolType.value}`]
-  
-  if (hasError.value) {
-    classes.push('has-error')
-  }
-  
+  const classes = [`tool-type-${props.toolCall.type}`]
+
   if (isExpanded.value) {
     classes.push('expanded')
   }
-  
+
   return classes
-})
-
-// 输入参数
-const toolInput = computed(() => {
-  if (props.toolCall.function?.arguments) {
-    try {
-      return typeof props.toolCall.function.arguments === 'string' 
-        ? JSON.parse(props.toolCall.function.arguments)
-        : props.toolCall.function.arguments
-    } catch {
-      return props.toolCall.function.arguments
-    }
-  }
-  
-  if (props.toolCall.input) {
-    return props.toolCall.input
-  }
-  
-  return null
-})
-
-// 输出结果
-const toolOutput = computed(() => {
-  if (props.toolCall.result) {
-    return props.toolCall.result
-  }
-  
-  if (props.toolCall.output) {
-    return props.toolCall.output
-  }
-  
-  return null
-})
-
-// 错误信息
-const errorMessage = computed(() => {
-  if (props.toolCall.error) {
-    return typeof props.toolCall.error === 'string' 
-      ? props.toolCall.error 
-      : JSON.stringify(props.toolCall.error, null, 2)
-  }
-  
-  return null
-})
-
-// 执行时间
-const executionTime = computed(() => {
-  if (props.toolCall.execution_time) {
-    return props.toolCall.execution_time
-  }
-  
-  if (props.toolCall.duration) {
-    return props.toolCall.duration
-  }
-  
-  return null
-})
-
-// 条件检查
-const hasInput = computed(() => toolInput.value !== null)
-const hasOutput = computed(() => toolOutput.value !== null)
-const hasError = computed(() => errorMessage.value !== null)
-const hasMetadata = computed(() => {
-  return props.toolCall.id || props.toolCall.type || props.toolCall.index !== undefined
 })
 
 // 格式化 JSON
@@ -204,7 +61,7 @@ const formatJson = (obj) => {
   if (obj === null || obj === undefined) {
     return ''
   }
-  
+
   if (typeof obj === 'string') {
     try {
       return JSON.stringify(JSON.parse(obj), null, 2)
@@ -212,16 +69,8 @@ const formatJson = (obj) => {
       return obj
     }
   }
-  
+
   return JSON.stringify(obj, null, 2)
-}
-
-const formattedInput = computed(() => formatJson(toolInput.value))
-const formattedOutput = computed(() => formatJson(toolOutput.value))
-
-// 控制方法
-const toggleExpanded = () => {
-  isExpanded.value = !isExpanded.value
 }
 </script>
 
@@ -233,6 +82,15 @@ const toggleExpanded = () => {
   margin-bottom: var(--spacing-sm);
   overflow: hidden;
   transition: all 0.2s ease;
+}
+
+.tool-call-id {
+  font-size: var(--font-size-small);
+  color: var(--color-foreground-secondary);
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  background: var(--color-background-elevation-2);
+  padding: 3px 0;
+  border-radius: 3px;
 }
 
 .tool-call-viewer:hover {
@@ -260,6 +118,7 @@ const toggleExpanded = () => {
 }
 
 .tool-call-title {
+  word-break: break-all;
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
@@ -299,17 +158,11 @@ const toggleExpanded = () => {
 }
 
 .tool-call-controls {
+  margin-left: 10px;
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
 }
-
-.execution-time {
-  font-size: var(--font-size-small);
-  color: var(--color-foreground-secondary);
-  font-family: 'SFMono-Regular', Consolas, monospace;
-}
-
 .expand-icon {
   font-size: var(--font-size-small);
   color: var(--color-foreground-secondary);
@@ -334,20 +187,6 @@ const toggleExpanded = () => {
   margin-bottom: 0;
 }
 
-.section-title {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  margin-bottom: var(--spacing-sm);
-  font-weight: 600;
-  color: var(--color-foreground);
-  font-size: var(--font-size-small);
-}
-
-.section-icon {
-  font-size: var(--font-size-medium);
-}
-
 .section-content {
   background: var(--color-background-elevation-1);
   border: 1px solid var(--color-border);
@@ -367,47 +206,6 @@ const toggleExpanded = () => {
   color: var(--color-foreground);
   max-height: 300px;
   overflow-y: auto;
-}
-
-.error-section .section-content {
-  border-color: var(--color-error);
-  background: var(--color-error-bg);
-}
-
-.error-message {
-  padding: var(--spacing-sm);
-  color: var(--color-error);
-  font-family: 'SFMono-Regular', Consolas, monospace;
-  font-size: var(--font-size-small);
-  white-space: pre-wrap;
-}
-
-.metadata-section .section-content {
-  padding: var(--spacing-sm);
-  background: var(--color-background-elevation-2);
-}
-
-.metadata-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: var(--spacing-sm);
-}
-
-.metadata-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.metadata-item label {
-  font-weight: 500;
-  color: var(--color-foreground-secondary);
-  font-size: var(--font-size-small);
-}
-
-.metadata-item span {
-  font-size: var(--font-size-small);
-  color: var(--color-foreground);
 }
 
 .monospace {

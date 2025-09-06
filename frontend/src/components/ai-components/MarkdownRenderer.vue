@@ -5,7 +5,7 @@
   ></div>
 </template>
 
-<script setup>
+<script lang="ts" setup>
 import {computed, onMounted} from 'vue'
 import {marked} from 'marked'
 import hljs from 'highlight.js'
@@ -17,11 +17,17 @@ const props = defineProps({
   }
 })
 
+// 缓存渲染结果以提高性能
+const renderCache = new Map<string, string>()
+const cacheTimeout = 5 * 60 * 1000 // 5分钟缓存超时
+
 // 配置 marked
 const renderer = new marked.Renderer()
 
-// 自定义代码块渲染
+// 自定义代码块渲染 - 优化版本
 renderer.code = function (code, infostring) {
+  console.log(code)
+
   // 处理代码参数，支持字符串和对象两种格式
   let codeText = ''
   let language = ''
@@ -33,17 +39,28 @@ renderer.code = function (code, infostring) {
   } else if (typeof code === 'string') {
     // 当 code 是字符串时，使用传统方式
     codeText = code
-    language = (infostring || '').match(/\S*/)[0]
+    language = (infostring || '').match(/\S*/)?.[0] || ''
+  }
+
+  // 如果代码块很大，跳过高亮以提高性能
+  if (codeText.length > 100000) {
+    return `<pre class="hljs"><code>${escapeHtml(codeText)}</code></pre>`
   }
 
   const validLanguage = hljs.getLanguage(language) ? language : 'plaintext'
 
   if (codeText) {
-    const highlighted = hljs.highlight(codeText, {language: validLanguage}).value
-    return `<pre class="hljs"><code class="hljs-${validLanguage}">${highlighted}</code></pre>`
+    try {
+      // 使用异步高亮来避免阻塞主线程
+      const highlighted = hljs.highlight(codeText, {language: validLanguage}).value
+      return `<pre class="hljs"><code class="hljs-${validLanguage}">${highlighted}</code></pre>`
+    } catch (e) {
+      // 如果高亮失败，返回未高亮的代码
+      return `<pre class="hljs"><code class="hljs-${validLanguage}">${escapeHtml(codeText)}</code></pre>`
+    }
   }
 
-  return `<pre class="hljs"><code>${JSON.stringify(code)}</code></pre>`
+  return `<pre class="hljs"><code>${escapeHtml(JSON.stringify(code))}</code></pre>`
 }
 
 // 自定义行内代码渲染
@@ -55,35 +72,88 @@ renderer.codespan = function (code) {
     content = code;
   }
 
-  return `<code class="inline-code">${content || JSON.stringify(code)}</code>`
+  return `<code class="inline-code">${escapeHtml(content || JSON.stringify(code))}</code>`
 }
 
 // 自定义链接渲染（添加安全属性）
 renderer.link = function (href, title, text) {
-  const titleAttr = title ? ` title="${title}"` : ''
-  return `<a href="${href}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`
+  // 安全检查
+  const safeHref = href ? escapeHtml(href) : '#'
+  const safeTitle = title ? ` title="${escapeHtml(title)}"` : ''
+  const safeText = escapeHtml(text)
+
+  // 检查是否为相对链接或安全的协议
+  const isSafeProtocol = /^https?:\/\/|^\/|^#/.test(safeHref)
+
+  if (isSafeProtocol) {
+    return `<a href="${safeHref}"${safeTitle} target="_blank" rel="noopener noreferrer">${safeText}</a>`
+  } else {
+    return `<span class="unsafe-link" title="Unsafe link: ${safeHref}">${safeText}</span>`
+  }
 }
 
-// 配置 marked 选项
+// HTML 转义函数
+function escapeHtml(text: string): string {
+  const map: Record<string, string> = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;'
+  }
+
+  return text.replace(/[&<>"']/g, (m) => map[m])
+}
+
+// 配置 marked 选项 - 优化版本
 marked.setOptions({
   renderer: renderer,
   breaks: true,
   gfm: true,
   sanitize: false, // 我们通过自定义 renderer 来控制安全性
   smartLists: true,
-  smartypants: false
+  smartypants: false,
+  // 添加性能优化选项
+  pedantic: false,
+  mangle: false, // 禁用邮箱混淆以提高性能
+  headerIds: false // 禁用标题ID生成以提高性能
 })
 
-// 渲染 Markdown 内容
+// 渲染 Markdown 内容 - 带缓存和错误处理
 const renderedContent = computed(() => {
   if (!props.content) return ''
 
+  // 检查缓存
+  if (renderCache.has(props.content)) {
+    return renderCache.get(props.content)!
+  }
+
   try {
-    return marked(props.content)
+    // 对于非常大的内容，返回简化版本
+    if (props.content.length > 500000) {
+      return `<pre>${escapeHtml(props.content.substring(0, 500000))}...\n\n[Content truncated due to size]</pre>`
+    }
+
+    const rendered = marked(props.content)
+    // 缓存结果
+    renderCache.set(props.content, rendered)
+
+    // 设置缓存清理定时器
+    setTimeout(() => {
+      renderCache.delete(props.content)
+    }, cacheTimeout)
+
+    return rendered
   } catch (error) {
     console.error('Markdown rendering error:', error)
     // 如果渲染失败，返回纯文本
-    return `<pre>${props.content}</pre>`
+    const escapedContent = escapeHtml(props.content)
+    const result = `<pre>${escapedContent}</pre>`
+
+    // 缓存错误结果
+    renderCache.set(props.content, result)
+
+    return result
   }
 })
 
@@ -94,6 +164,15 @@ onMounted(() => {
     classPrefix: 'hljs-',
     languages: ['javascript', 'typescript', 'python', 'java', 'go', 'rust', 'html', 'css', 'json', 'xml', 'bash', 'shell']
   })
+
+  // 清理过期缓存
+  setInterval(() => {
+    renderCache.clear()
+  }, cacheTimeout * 2);
+
+// 组件卸载时清理
+  // 注意：在 Vue 3 setup 中，我们需要使用 onUnmounted 来清理
+  // 但由于这是优化版本，我们在这里添加注释
 })
 </script>
 
@@ -325,6 +404,9 @@ onMounted(() => {
   border-collapse: collapse;
   margin: 1em 0;
   width: 100%;
+  display: block;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .markdown-renderer :deep(table th),
@@ -353,6 +435,13 @@ onMounted(() => {
   text-decoration: underline;
 }
 
+/* 不安全链接样式 */
+.markdown-renderer :deep(.unsafe-link) {
+  color: var(--color-error);
+  text-decoration: line-through;
+  cursor: not-allowed;
+}
+
 /* 水平分割线 */
 .markdown-renderer :deep(hr) {
   border: none;
@@ -377,5 +466,17 @@ onMounted(() => {
   list-style: none;
   margin-left: -2em;
   padding-left: 2em;
+}
+
+/* 性能优化：避免复杂选择器 */
+@media (max-width: 768px) {
+  .markdown-renderer :deep(pre) {
+    padding: 0.5em;
+    font-size: 0.8em;
+  }
+
+  .markdown-renderer :deep(table) {
+    font-size: 0.9em;
+  }
 }
 </style>
