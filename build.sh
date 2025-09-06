@@ -49,30 +49,21 @@ get_version() {
 build() {
     local os=$1
     local arch=$2
-    local output_name="$PROJECT_NAME"
+    local output_name="${PROJECT_NAME}-${VERSION}-${os}-${arch}"
     
     if [ "$os" = "windows" ]; then
-        output_name="$PROJECT_NAME.exe"
+        output_name="${PROJECT_NAME}-${VERSION}-${os}-${arch}.exe"
     fi
-    
-    local output_path="$BUILD_DIR/${os}_${arch}_${VERSION}"
-    mkdir -p "$output_path"
     
     log_info "构建 $os/$arch 版本..."
     
     # 设置构建标签，不包含证书初始化
     go build -tags="release" \
         -ldflags="-X main.Version=$VERSION -X main.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ) -s -w" \
-        -o "$output_path/$output_name" \
+        -o "$DIST_DIR/$output_name" \
         ./main.go
     
-    # 创建 ZIP 文件
-    local zip_name="${PROJECT_NAME}-${VERSION}-${os}-${arch}.zip"
-    cd "$output_path"
-    zip -r "../../$DIST_DIR/$zip_name" .
-    cd - > /dev/null
-    
-    log_info "✅ $os/$arch 构建完成: $zip_name"
+    log_info "✅ $os/$arch 构建完成: $output_name"
 }
 
 # 主构建流程
@@ -101,7 +92,8 @@ main() {
     # 计算文件哈希
     log_info "计算文件哈希..."
     cd $DIST_DIR
-    for file in *.zip; do
+    > checksums.txt  # 清空校验和文件
+    for file in proxyMan-* proxyMan.exe-*; do
         if [ -f "$file" ]; then
             sha256sum "$file" >> "checksums.txt"
             log_info "📋 $(sha256sum "$file")"
@@ -119,19 +111,22 @@ main() {
 - Git 提交: $(git rev-parse --short HEAD)
 
 ## 支持的平台
-- macOS (Intel): ${PROJECT_NAME}-${VERSION}-darwin-amd64.zip
-- macOS (Apple Silicon): ${PROJECT_NAME}-${VERSION}-darwin-arm64.zip
-- Linux (x86_64): ${PROJECT_NAME}-${VERSION}-linux-amd64.zip
-- Linux (ARM64): ${PROJECT_NAME}-${VERSION}-linux-arm64.zip
-- Windows (x86_64): ${PROJECT_NAME}-${VERSION}-windows-amd64.zip
-- Windows (ARM64): ${PROJECT_NAME}-${VERSION}-windows-arm64.zip
+- macOS (Intel): ${PROJECT_NAME}-${VERSION}-darwin-amd64
+- macOS (Apple Silicon): ${PROJECT_NAME}-${VERSION}-darwin-arm64
+- Linux (x86_64): ${PROJECT_NAME}-${VERSION}-linux-amd64
+- Linux (ARM64): ${PROJECT_NAME}-${VERSION}-linux-arm64
+- Windows (x86_64): ${PROJECT_NAME}-${VERSION}-windows-amd64.exe
+- Windows (ARM64): ${PROJECT_NAME}-${VERSION}-windows-arm64.exe
 
 ## 使用说明
-1. 下载对应平台的压缩包
-2. 解压到任意目录
+1. 下载对应平台的二进制文件
+2. 给文件添加执行权限 (macOS/Linux):
+   \`\`\`bash
+   chmod +x ${PROJECT_NAME}-${VERSION}-darwin-amd64
+   \`\`\`
 3. 运行程序:
-   - macOS/Linux: \`./proxyMan\`
-   - Windows: \`proxyMan.exe\`
+   - macOS/Linux: \`./${PROJECT_NAME}-${VERSION}-darwin-amd64\`
+   - Windows: `${PROJECT_NAME}-${VERSION}-windows-amd64.exe`
 
 ## 注意事项
 - 首次运行时会自动生成 CA 证书文件
@@ -156,11 +151,6 @@ EOF
 check_dependencies() {
     if ! command -v go &> /dev/null; then
         log_error "Go 未安装，请先安装 Go"
-        exit 1
-    fi
-    
-    if ! command -v zip &> /dev/null; then
-        log_error "zip 命令未找到，请安装 zip 工具"
         exit 1
     fi
     
