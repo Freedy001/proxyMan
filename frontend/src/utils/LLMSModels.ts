@@ -3,25 +3,20 @@
 
 export type Role = 'system' | 'user' | 'assistant' | 'tool';
 
-export interface Message {
-  role: Role;
-  content: string | ContentPart[] | null;
-  name?: string;
-}
-
-export interface ContentPart {
-  type: 'text' | 'image_url';
-  text?: string;
-  image_url?: {
-    url: string;
-    detail?: 'low' | 'high' | 'auto';
-  };
-}
 
 // OpenAI 格式定义 (基本正确，无需大改)
 export namespace OpenAI {
 
-  export interface ChatCompletionMessage extends Message {
+  export interface ContentPart {
+    type: 'text' | 'image_url';
+    text?: string;
+    image_url?: {
+      url: string;
+      detail?: 'low' | 'high' | 'auto';
+    };
+  }
+
+  export interface ChatCompletionMessage {
     role: Role;
     content: string | ContentPart[] | null;
     name?: string;
@@ -159,8 +154,8 @@ export namespace Anthropic {
   export type ContentBlock = TextBlock | ImageBlock | ToolUseBlock | ToolResultBlock;
 
   export type SystemMessage =
-    | { type: "text"; text: string }
-    | { type: "cache_control"; cache_type: "ephemeral" };
+      | { type: "text"; text: string }
+      | { type: "cache_control"; cache_type: "ephemeral" };
 
   // MODIFIED: system 类型从 `string | SystemMessage[]` 改为 `string`
   export interface MessageRequest {
@@ -263,13 +258,13 @@ export namespace Anthropic {
   }
 
   export type AnthropicChunk =
-    | MessageStartEvent
-    | ContentBlockStartEvent
-    | PingEvent
-    | ContentBlockDeltaEvent
-    | ContentBlockStopEvent
-    | MessageDeltaEvent
-    | MessageStopEvent;
+      | MessageStartEvent
+      | ContentBlockStartEvent
+      | PingEvent
+      | ContentBlockDeltaEvent
+      | ContentBlockStopEvent
+      | MessageDeltaEvent
+      | MessageStopEvent;
 }
 
 export namespace Gemini {
@@ -288,10 +283,10 @@ export namespace Gemini {
   }
 
   export type Part =
-    | { text: string; }
-    | { inlineData: BlobPart; }
-    | { functionCall: FunctionCall; }
-    | { functionResponse: FunctionResponse; };
+      | { text: string; }
+      | { inlineData: BlobPart; }
+      | { functionCall: FunctionCall; }
+      | { functionResponse: FunctionResponse; };
 
 
   export interface BlobPart {
@@ -333,12 +328,7 @@ export namespace Gemini {
     threshold: string;
   }
 
-  export interface GenerateContentResponse {
-    candidates: Candidate[];
-    usageMetadata?: UsageMetadata;
-  }
-
-  export interface ChunkResponse {
+  export interface ContentResponse {
     candidates: Candidate[];
     usageMetadata?: UsageMetadata;
   }

@@ -61,7 +61,8 @@
           <div v-if="activeTab === 'headers'" class="tab-pane headers-tab-pane">
             <div class="details-section headers-section">
               <div class="details-section-title">Request Headers</div>
-              <div v-if="Object.keys(requestDetailsManager.getRequestHeaders().value).length > 0" class="headers-table-container">
+              <div v-if="Object.keys(requestDetailsManager.getRequestHeaders().value).length > 0"
+                   class="headers-table-container">
                 <table class="headers-table">
                   <thead>
                   <tr>
@@ -70,7 +71,8 @@
                   </tr>
                   </thead>
                   <tbody>
-                  <tr v-for="(value, name) in requestDetailsManager.getRequestHeaders().value" :key="name" class="header-row">
+                  <tr v-for="(value, name) in requestDetailsManager.getRequestHeaders().value" :key="name"
+                      class="header-row">
                     <td class="header-name">{{ name }}</td>
                     <td class="header-value">{{ formatHeaderValue(value) }}</td>
                   </tr>
@@ -85,7 +87,8 @@
             <!-- Response Headers Tab -->
             <div class="details-section headers-section">
               <div class="details-section-title">Response Headers</div>
-              <div v-if="Object.keys(requestDetailsManager.getResponseHeaders().value).length > 0" class="headers-table-container">
+              <div v-if="Object.keys(requestDetailsManager.getResponseHeaders().value).length > 0"
+                   class="headers-table-container">
                 <table class="headers-table">
                   <thead>
                   <tr>
@@ -94,7 +97,8 @@
                   </tr>
                   </thead>
                   <tbody>
-                  <tr v-for="(value, name) in requestDetailsManager.getResponseHeaders().value" :key="name" class="header-row">
+                  <tr v-for="(value, name) in requestDetailsManager.getResponseHeaders().value" :key="name"
+                      class="header-row">
                     <td class="header-name">{{ name }}</td>
                     <td class="header-value">{{ formatHeaderValue(value) }}</td>
                   </tr>
@@ -145,6 +149,7 @@
                   :response-body="requestDetailsManager.getResponseBody().value"
                   :url="requestsStore.selectedRequest?.url || ''"
                   :finished="requestDetailsManager.getRequestState().value>=3"
+                  :aiProvider="aiProvider"
               />
             </div>
           </div>
@@ -159,9 +164,9 @@
 import {ref, watch, computed, onUnmounted} from 'vue'
 import {useRequestsStore} from '../stores/requests'
 import {RequestDetailsManager} from '../composables/RequestDetails'
-import {isAIRequest} from '../utils/AiDetector'
 import BodyViewer from './BodyViewer.vue'
 import ChatViewer from './ai-components/ChatViewer.vue'
+import {getAIProvider} from "@/utils/LLMSProvider.ts";
 
 const requestsStore = useRequestsStore()
 const requestDetailsManager = new RequestDetailsManager()
@@ -176,11 +181,11 @@ const requestViewMode = ref('raw')
 const responseViewMode = ref('raw')
 
 // 检测是否为 AI 请求
-const isAIConversation = computed(() => {
+const aiProvider = computed(() => {
   const request = requestsStore.selectedRequest
   if (!request) return false
-  
-  return isAIRequest(request.url, request.method, request.headers || {})
+
+  return getAIProvider(request.url, request.method)
 })
 
 // 动态生成 tabs
@@ -191,12 +196,16 @@ const tabs = computed(() => {
     {key: 'request', label: 'Request'},
     {key: 'response', label: 'Response'}
   ]
-  
+
+
   // 如果是 AI 请求，在 response 后添加 AI Chat tab
-  if (isAIConversation.value) {
+  if (aiProvider.value) {
     baseTabs.push({key: 'ai-chat', label: 'AI Chat'})
+  } else if (activeTab.value === 'ai-chat') {
+    activeTab.value = 'summary'
   }
-  
+
+
   return baseTabs
 })
 
@@ -205,7 +214,6 @@ watch(() => requestsStore.selectedRequestId, (newId, oldId) => {
   if (newId && newId !== oldId) {
     requestDetailsManager.clearDetails()
     requestDetailsManager.loadRequestDetails(newId)
-    activeTab.value = 'summary'
   } else if (!newId) {
     requestDetailsManager.clearDetails()
   }

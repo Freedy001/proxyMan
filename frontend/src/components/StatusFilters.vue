@@ -45,7 +45,8 @@ const contentTypeFilters = [
   { value: 'html', label: 'HTML' },
   { value: 'image', label: 'Image' },
   { value: 'css', label: 'CSS' },
-  { value: 'js', label: 'JS' }
+  { value: 'js', label: 'JS' },
+  { value: 'event-stream', label: 'Event Stream' }
 ]
 
 const setStatusFilter = (filter) => {

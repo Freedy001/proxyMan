@@ -265,8 +265,9 @@ func copyStream(src io.Reader, dst io.Writer, proxy *DataProxy, dataType model.D
 				break
 			}
 			if err != nil {
-				//log.Printf("Error reading decoded stream: %v", err)
-				//proxy.reportError(err)
+				log.Printf("Error reading decoded stream: %v", err)
+				proxy.reportError(err)
+				_ = pr.CloseWithError(err) // Close the pipe with an error
 				break
 			}
 		}

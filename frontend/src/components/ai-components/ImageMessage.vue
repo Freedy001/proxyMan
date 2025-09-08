@@ -62,7 +62,7 @@
 
 <script lang="ts" setup>
 import { ref, computed, onMounted } from 'vue'
-import { ContentPart } from '@/utils/LLMSModels.ts'
+import { OpenAI } from '@/utils/LLMSModels.ts'
 
 interface ImageData {
   url: string
@@ -71,7 +71,7 @@ interface ImageData {
 }
 
 const props = defineProps<{
-  content: string | ContentPart[]
+  content: string | OpenAI.ContentPart[]
 }>()
 
 // 提取图片数据
@@ -275,7 +275,6 @@ onUnmounted(() => {
   background: rgba(0, 0, 0, 0.7);
   color: white;
   display: flex;
-  //flex-direction: column;
   align-items: center;
   justify-content: center;
   opacity: 0;
@@ -416,7 +415,8 @@ onUnmounted(() => {
     width: 36px;
     height: 36px;
   }
-  
+
+  /*noinspection CssUnresolvedCustomProperty*/
   .image-overlay {
     font-size: var(--font-size-tiny);
   }

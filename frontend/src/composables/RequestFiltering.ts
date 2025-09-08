@@ -56,6 +56,8 @@ export class RequestFilteringManager {
               return contentType.includes('text/css')
             case 'js':
               return contentType.includes('javascript') || contentType.includes('application/javascript')
+            case 'event-stream':
+              return contentType.includes('event-stream')
             default:
               return true
           }

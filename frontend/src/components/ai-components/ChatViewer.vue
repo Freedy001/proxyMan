@@ -149,31 +149,20 @@
 
 <script lang="ts" setup>
 import {computed, nextTick, onMounted, ref, watch} from 'vue'
-import {getAIProvider, isStreamResponse} from '@/utils/AiDetector.ts'
 import ToolCallViewer from './ToolCallViewer.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import ToolMessage from './ToolMessage.vue'
 import ImageMessage from './ImageMessage.vue'
 import {OpenAI} from "@/utils/LLMSModels.ts"
+import {isStreamResponse, LLMSProvider} from "@/utils/LLMSProvider.ts";
 
-const props = defineProps({
-  requestBody: {
-    type: String,
-    default: ''
-  },
-  responseBody: {
-    type: String,
-    default: ''
-  },
-  url: {
-    type: String,
-    default: ''
-  },
-  finished: {
-    type: Boolean,
-    default: false
-  }
-})
+const props = defineProps<{
+  requestBody?: string
+  responseBody?: string
+  url?: string
+  finished?: boolean
+  aiProvider?: LLMSProvider
+}>()
 
 // Refs
 const messagesContainer = ref<Element>()
@@ -182,14 +171,11 @@ const autoScroll = ref(true)
 const error = ref('')
 const usage = ref<OpenAI.Usage | null>(null)
 
-// 获取 AI Provider
-const aiProvider = getAIProvider(props.url)
-
 // 请求和响应数据
 const requestData = computed<OpenAI.ChatCompletionRequest | null>(() => {
   try {
-    if (!props.requestBody || !aiProvider) return null
-    return aiProvider.parseRequest(props.requestBody)
+    if (!props.requestBody || !props.aiProvider) return null
+    return props.aiProvider.parseRequest(props.requestBody)
   } catch (err) {
     console.error(err)
     error.value = `Failed to parse AI request: ${(err as Error).message}`
@@ -204,15 +190,15 @@ const systemMessage = computed(() => {
 })
 
 // 解析流式数据
-const parseStreamData = (responseBody: string): OpenAI.Chunk[] => {
-  if (!responseBody || !aiProvider) return []
+const parseStreamData = (responseBody?: string): OpenAI.Chunk[] => {
+  if (!responseBody || !props.aiProvider) return []
 
   const chunks: OpenAI.Chunk[] = []
 
   for (const line of responseBody.split('\n')) {
     if (line.startsWith('data: ')) {
       try {
-        const chunk = aiProvider.parseChunk(line)
+        const chunk = props.aiProvider.parseChunk(line)
         if (chunk) chunks.push(chunk)
       } catch (err) {
         console.warn('Failed to parse chunk:', err)
@@ -311,7 +297,7 @@ const displayMessages = computed<Message[]>(() => {
     } else {
       // 处理普通响应
       if (props.responseBody) {
-        let response = aiProvider?.parseResponse(props.responseBody);
+        let response = props.aiProvider?.parseResponse(props.responseBody);
         if (response?.usage) usage.value = response.usage
         response?.choices.forEach((choice, idx) => {
           if (choice.message) {
@@ -445,6 +431,7 @@ onMounted(() => {
 })
 </script>
 
+<!--suppress CssUnusedSymbol -->
 <style scoped>
 .chat-viewer {
   display: flex;
@@ -724,6 +711,7 @@ onMounted(() => {
   border-style: dashed;
 }
 
+/*noinspection CssUnresolvedCustomProperty*/
 .error-message .message-content {
   background: var(--color-error-bg);
   border-color: var(--color-error);
