@@ -1,0 +1,27 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "ProxyMan",
+  "outputfilename": "proxyMan",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "Freedy",
+    "email": "freedyamazing@gmail.com"
+  },
+  "info": {
+    "companyName": "Freedy",
+    "productName": "ProxyMan",
+    "productVersion": "1.0.0",
+    "copyright": "Copyright © 2025 ProxyMan",
+    "comments": "Network proxy monitor with MITM capabilities"
+  },
+  "windows": {
+    "hideConsole": true 
+  },
+  "wailsjsdir": "./frontend/src",
+  "build:dir": "./build",
+  "debounceMS": 750,
+  "reloadonchange": true
+}

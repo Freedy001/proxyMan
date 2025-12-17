@@ -6,17 +6,20 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"proxyMan/model"
+	"proxyMan/server/common"
 	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
-type DataCb func(dataType model.DataType, data []byte, timestamp time.Time, finished bool)
+type DataCb func(dataType common.DataType, data []byte, timestamp time.Time, finished bool)
 
-const cacheSize = 1000
-const maxBodySize = 100 * 1024 * 1024 //100MM
+const (
+	cacheSize   = 1000
+	maxBodySize = 100 * 1024 * 1024 //100MM
+)
+
 var bodyMaxMsg = &(list.List{})
 
 func init() {
@@ -28,9 +31,9 @@ var proxy = make([]*DataProxy, cacheSize)
 var proxyMutex = &sync.RWMutex{} // 保护全局proxy数组的读写锁
 
 type DataProxy struct {
-	Contents *model.HttpContents
+	Contents *common.HttpContents
 	Finished bool
-	state    model.DataType
+	state    common.DataType
 	reqBody  *list.List
 	respBody *list.List
 	bodySize int
@@ -39,12 +42,12 @@ type DataProxy struct {
 	error    error
 }
 
-func NewProxy() *DataProxy {
+func NewDataProxy() *DataProxy {
 	id := atomic.AddInt64(&maxIndex, 1)
 	now := time.Now()
 	data := &DataProxy{
-		Contents: &model.HttpContents{
-			RequestSummary: model.RequestSummary{
+		Contents: &common.HttpContents{
+			RequestSummary: common.RequestSummary{
 				ID:        id,
 				StartTime: &now,
 				EndTime:   nil,
@@ -110,15 +113,15 @@ func (p *DataProxy) reportRequest(req *http.Request) {
 	}
 	log.Printf("Intercepted %s request: %s %s (ID: %d)", protocol, req.Method, fullURL, p.Id())
 
-	p.Contents.Status = model.StatusStarted
+	p.Contents.Status = common.StatusStarted
 	p.Contents.Method = req.Method
 	p.Contents.Host = req.Host
 	p.Contents.URL = fullURL
 	p.Contents.RequestHeaders = req.Header
-	p.state = model.RequestHeader
+	p.state = common.RequestHeader
 
 	p.cond.Broadcast()
-	model.SummaryBodyCast <- p.Contents.RequestSummary
+	common.ReqSummary.BoardCast(p.Contents.RequestSummary)
 }
 
 func (p *DataProxy) reportResponse(resp *http.Response) {
@@ -126,25 +129,25 @@ func (p *DataProxy) reportResponse(resp *http.Response) {
 	defer p.lock.Unlock()
 
 	// Update details with response headers
-	p.Contents.Status = model.StatusReceiving
+	p.Contents.Status = common.StatusReceiving
 	p.Contents.ContentType = resp.Header.Get("Content-Type")
 	p.Contents.StatusCode = resp.StatusCode
 	p.Contents.ResponseHeaders = resp.Header
-	p.state = model.ResponseHeader
+	p.state = common.ResponseHeader
 
 	p.cond.Broadcast()
-	model.SummaryBodyCast <- p.Contents.RequestSummary
+	common.ReqSummary.BoardCast(p.Contents.RequestSummary)
 }
 
-func (p *DataProxy) reportChunkData(dataType model.DataType, chunk []byte) {
+func (p *DataProxy) reportChunkData(dataType common.DataType, chunk []byte) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
 	var bodyData *list.List
 	switch dataType {
-	case model.RequestBody:
+	case common.RequestBody:
 		bodyData = p.reqBody
-	case model.ResponseBody:
+	case common.ResponseBody:
 		bodyData = p.respBody
 	}
 
@@ -168,30 +171,30 @@ func (p *DataProxy) reportChunkData(dataType model.DataType, chunk []byte) {
 
 }
 
-func (p *DataProxy) reportEnd(dataType model.DataType) {
+func (p *DataProxy) reportEnd(dataType common.DataType) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
-	if dataType == model.RequestBody {
+	if dataType == common.RequestBody {
 		p.Contents.RequestBody = getBytes(p.reqBody)
 		p.reqBody = nil
-		p.state = model.RequestBody
+		p.state = common.RequestBody
 		p.bodySize = 0
 	}
 
-	if dataType == model.ResponseBody {
-		p.Contents.Status = model.StatusCompleted
+	if dataType == common.ResponseBody {
+		p.Contents.Status = common.StatusCompleted
 		now := time.Now()
 		p.Contents.EndTime = &now
 		p.Contents.ResponseBody = getBytes(p.respBody)
 		p.respBody = nil
 		p.Finished = true
 		// 修复：移除重复的状态设置，避免潜在的状态冲突
-		p.state = model.ResponseBody
+		p.state = common.ResponseBody
 		p.bodySize = 0
 	}
 
-	model.SummaryBodyCast <- p.Contents.RequestSummary
+	common.ReqSummary.BoardCast(p.Contents.RequestSummary)
 	p.cond.Broadcast()
 }
 
@@ -204,79 +207,79 @@ func (p *DataProxy) reportError(error error) {
 	fmt.Printf("--- 当前 Goroutine 堆栈信息 ---\n%s\n", string(buf[:n]))
 	log.Printf("Error occurred in proxy request %d: %s reason: %s", p.Id(), p.target(), error)
 
-	p.Contents.Status = model.StatusError
+	p.Contents.Status = common.StatusError
 	now := time.Now()
 	p.Contents.EndTime = &now
 	p.error = error
-	p.state = model.ERROR
+	p.state = common.ERROR
 
 	// Broadcast error summary
-	model.SummaryBodyCast <- p.Contents.RequestSummary
+	common.ReqSummary.BoardCast(p.Contents.RequestSummary)
 	p.cond.Broadcast()
 	return
 }
 
 func (p *DataProxy) OnData(cb DataCb) {
 	//RequestHeader
-	p.waitStatusChange(model.RequestHeader)
+	p.waitStatusChange(common.RequestHeader)
 	if p.checkError(cb) {
 		return
 	}
 	data, err := json.Marshal(p.Contents.RequestHeaders)
 	if err == nil {
-		cb(model.RequestHeader, data, time.Now(), true)
+		cb(common.RequestHeader, data, time.Now(), true)
 	} else {
-		cb(model.RequestHeader, []byte{}, time.Now(), true)
+		cb(common.RequestHeader, []byte{}, time.Now(), true)
 	}
 
 	//RequestBody
-	p.processBodyData(model.RequestBody, cb)
+	p.processBodyData(common.RequestBody, cb)
 	if p.checkError(cb) {
 		return
 	}
 
 	//ResponseHeader
-	p.waitStatusChange(model.ResponseHeader)
+	p.waitStatusChange(common.ResponseHeader)
 	if p.checkError(cb) {
 		return
 	}
 	data, err = json.Marshal(p.Contents.ResponseHeaders)
 	if err == nil {
-		cb(model.ResponseHeader, data, time.Now(), true)
+		cb(common.ResponseHeader, data, time.Now(), true)
 	} else {
-		cb(model.ResponseHeader, []byte{}, time.Now(), true)
+		cb(common.ResponseHeader, []byte{}, time.Now(), true)
 	}
 
 	//ResponseBody
-	p.processBodyData(model.ResponseBody, cb)
+	p.processBodyData(common.ResponseBody, cb)
 	if p.checkError(cb) {
 		return
 	}
 
 	data, err = json.Marshal(p.Contents.RequestSummary)
 	if err == nil {
-		cb(model.Metadata, data, time.Now(), true)
+		cb(common.Metadata, data, time.Now(), true)
 	} else {
-		cb(model.Metadata, []byte{}, time.Now(), true)
+		cb(common.Metadata, []byte{}, time.Now(), true)
 	}
 }
 
 func (p *DataProxy) checkError(cb DataCb) bool {
-	if p.state == model.ERROR {
-		cb(model.ERROR, []byte(p.error.Error()), time.Now(), true)
+	if p.state == common.ERROR {
+		cb(common.ERROR, []byte(p.error.Error()), time.Now(), true)
 		return true
 	}
 	return false
 }
 
-func (p *DataProxy) processBodyData(dataType model.DataType, cb DataCb) {
+func (p *DataProxy) processBodyData(dataType common.DataType, cb DataCb) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	if p.state >= dataType {
 		var data []byte
-		if dataType == model.RequestBody {
+		if dataType == common.RequestBody {
 			data = p.Contents.RequestBody
-		} else if dataType == model.ResponseBody {
+		} else if dataType == common.ResponseBody {
 			data = p.Contents.ResponseBody
 		} else {
 			data = []byte{}
@@ -285,9 +288,9 @@ func (p *DataProxy) processBodyData(dataType model.DataType, cb DataCb) {
 	} else {
 		oldState := p.state
 		var bodyList *list.List
-		if dataType == model.RequestBody {
+		if dataType == common.RequestBody {
 			bodyList = p.reqBody
-		} else if dataType == model.ResponseBody {
+		} else if dataType == common.ResponseBody {
 			bodyList = p.respBody
 		} else {
 			return
@@ -318,10 +321,10 @@ func (p *DataProxy) processBodyData(dataType model.DataType, cb DataCb) {
 	}
 }
 
-func (p *DataProxy) waitStatusChange(datatype model.DataType) {
+func (p *DataProxy) waitStatusChange(datatype common.DataType) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	for p.state < datatype && p.state != model.ERROR {
+	for p.state < datatype && p.state != common.ERROR {
 		p.cond.Wait()
 	}
 }

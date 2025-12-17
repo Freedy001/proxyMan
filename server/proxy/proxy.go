@@ -4,14 +4,19 @@ import (
 	"bufio"
 	"compress/flate"
 	"compress/gzip"
+	"context"
 	"crypto/tls"
+	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
-
-	"proxyMan/cert"
-	"proxyMan/model"
+	"net/url"
+	"proxyMan/server/cert"
+	"proxyMan/server/common"
+	"sync"
+	"time"
 
 	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/zstd"
@@ -42,7 +47,7 @@ func HandleHTTP(w http.ResponseWriter, r *http.Request) {
 
 func handlePlainHTTP(w io.Writer, r *http.Request) {
 	// 创建DataProxy实例来跟踪这个请求
-	proxy := NewProxy()
+	proxy := NewDataProxy()
 	// 报告请求信息
 	proxy.reportRequest(r)
 
@@ -50,7 +55,7 @@ func handlePlainHTTP(w io.Writer, r *http.Request) {
 	pr, pw := io.Pipe()
 	bodyReader := r.Body
 	r.Body = pr
-	go copyStream(bodyReader, pw, proxy, model.RequestBody, r.Header)
+	go copyStream(bodyReader, pw, proxy, common.RequestBody, r.Header)
 
 	// 清除RequestURI字段，避免客户端请求错误
 	// Go HTTP客户端不允许设置RequestURI，这是服务器端专用字段
@@ -59,11 +64,13 @@ func handlePlainHTTP(w io.Writer, r *http.Request) {
 	r.URL.Host = r.Host
 
 	// 转发请求到目标服务器
-	targetResp, err := (&http.Client{
+	client := &http.Client{
 		Transport: &http.Transport{
-			Proxy: http.ProxyFromEnvironment,
+			Proxy: buildProxyFunc(),
 		},
-	}).Do(r)
+	}
+
+	targetResp, err := client.Do(r)
 	if err != nil {
 		proxy.reportError(err)
 		_ = (&http.Response{
@@ -84,7 +91,7 @@ func handlePlainHTTP(w io.Writer, r *http.Request) {
 	pr, pw = io.Pipe()
 	remoteBodyReader := targetResp.Body
 	targetResp.Body = pr
-	go copyStream(remoteBodyReader, pw, proxy, model.ResponseBody, targetResp.Header)
+	go copyStream(remoteBodyReader, pw, proxy, common.ResponseBody, targetResp.Header)
 
 	err = targetResp.Write(w)
 	if err != nil {
@@ -159,14 +166,14 @@ func handleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	defer clientReq.Body.Close()
 
-	proxy := NewProxy()
+	proxy := NewDataProxy()
 	proxy.reportRequest(clientReq)
 
 	//代理请求流
 	pr, pw := io.Pipe()
 	bodyReader := clientReq.Body
 	clientReq.Body = pr
-	go copyStream(bodyReader, pw, proxy, model.RequestBody, clientReq.Header)
+	go copyStream(bodyReader, pw, proxy, common.RequestBody, clientReq.Header)
 
 	// 清除RequestURI字段，避免客户端请求错误
 	// Go HTTP客户端不允许设置RequestURI，这是服务器端专用字段
@@ -174,11 +181,13 @@ func handleConnect(w http.ResponseWriter, r *http.Request) {
 	clientReq.URL.Scheme = "https"
 	clientReq.URL.Host = clientReq.Host
 
-	targetResp, err := (&http.Client{
+	client := &http.Client{
 		Transport: &http.Transport{
-			Proxy: http.ProxyFromEnvironment,
+			Proxy: buildProxyFunc(),
 		},
-	}).Do(clientReq)
+	}
+
+	targetResp, err := client.Do(clientReq)
 	if err != nil {
 		proxy.reportError(err)
 		writeErrorMsg(tlsConn)
@@ -191,7 +200,7 @@ func handleConnect(w http.ResponseWriter, r *http.Request) {
 	pr, pw = io.Pipe()
 	remoteBodyReader := targetResp.Body
 	targetResp.Body = pr
-	go copyStream(remoteBodyReader, pw, proxy, model.ResponseBody, targetResp.Header)
+	go copyStream(remoteBodyReader, pw, proxy, common.ResponseBody, targetResp.Header)
 
 	err = targetResp.Write(tlsConn)
 	if err != nil {
@@ -213,7 +222,7 @@ func writeErrorMsg(tlsConn *tls.Conn) {
 	}).Write(tlsConn)
 }
 
-func copyStream(src io.Reader, dst io.Writer, proxy *DataProxy, dataType model.DataType, header http.Header) {
+func copyStream(src io.Reader, dst io.Writer, proxy *DataProxy, dataType common.DataType, header http.Header) {
 	defer func() {
 		// Close the writer to signal EOF to the reader side of the pipe
 		if closer, ok := dst.(io.Closer); ok {
@@ -284,4 +293,131 @@ func copyStream(src io.Reader, dst io.Writer, proxy *DataProxy, dataType model.D
 	writer := io.MultiWriter(dst, pw)
 	_, _ = io.Copy(writer, src)
 	_ = pw.Close()
+}
+
+var (
+	currentServer *http.Server
+	serverMutex   sync.Mutex
+	startError    error
+	currentHost   = "127.0.0.1" // 默认监听地址
+	currentPort   = 8888        // 默认端口
+
+	upstreamProxyConfig     common.UpstreamProxyConfig
+	upstreamProxyConfigLock sync.RWMutex
+)
+
+func init() {
+	upstreamProxyConfig = common.GetConfig().UpstreamProxy
+}
+
+func StartProxy(host string, port int) error {
+	serverMutex.Lock()
+	defer serverMutex.Unlock()
+
+	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
+	if err != nil {
+		log.Printf("Failed to bind address : %s cause %v", fmt.Sprintf("%s:%d", host, port), err)
+		return err
+	}
+
+	if currentServer != nil {
+		_ = listener.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := currentServer.Shutdown(ctx); err != nil {
+			log.Printf("Failed to shutdown proxy server: %v", err)
+			return err
+		}
+		currentServer = nil
+		log.Println("Proxy server stopped")
+	}
+
+	currentServer = &http.Server{Handler: http.HandlerFunc(HandleHTTP)}
+	// 保存当前配置
+	startError = nil
+	currentHost = host
+	currentPort = port
+	go doStartServer(currentServer, listener)
+
+	return nil
+}
+
+func doStartServer(server *http.Server, listener net.Listener) {
+	log.Println("Starting Proxy Server on " + listener.Addr().String())
+	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Println("Failed to listenAndServe: ", err)
+		serverMutex.Lock()
+		defer serverMutex.Unlock()
+		currentServer = nil
+		startError = err
+	}
+}
+
+func GetUpstreamProxyConfig() common.UpstreamProxyConfig {
+	upstreamProxyConfigLock.RLock()
+	defer upstreamProxyConfigLock.RUnlock()
+	return upstreamProxyConfig
+}
+
+func SetUpstreamProxyConfig(cfg common.UpstreamProxyConfig) error {
+	upstreamProxyConfigLock.Lock()
+	defer upstreamProxyConfigLock.Unlock()
+
+	// 持久化配置
+	err := common.UpdateUpstreamProxyConfig(cfg)
+	if err != nil {
+		return err
+	}
+
+	upstreamProxyConfig = cfg
+	return nil
+}
+
+func buildProxyFunc() func(*http.Request) (*url.URL, error) {
+	cfg := GetUpstreamProxyConfig()
+
+	// Mode: "none" - 不使用上游代理
+	if cfg.Mode == "none" {
+		return func(*http.Request) (*url.URL, error) {
+			return nil, nil
+		}
+	}
+
+	// Mode: "env" - 使用环境变量
+	if cfg.Mode == "env" || cfg.Mode == "" {
+		return http.ProxyFromEnvironment
+	}
+
+	// Mode: "custom" - 使用自定义代理
+	if cfg.Mode == "custom" && cfg.Protocol != "" && cfg.Host != "" && cfg.Port > 0 {
+		proxyURLStr := fmt.Sprintf("%s://%s:%d", cfg.Protocol, cfg.Host, cfg.Port)
+		proxyURL, err := url.Parse(proxyURLStr)
+		if err != nil {
+			log.Printf("invalid upstream proxy url %s: %v", proxyURLStr, err)
+			return func(*http.Request) (*url.URL, error) {
+				return nil, nil
+			}
+		}
+
+		return http.ProxyURL(proxyURL)
+	}
+
+	// 默认使用环境变量
+	return http.ProxyFromEnvironment
+}
+
+func IsStarted() (bool, error) {
+	return currentServer != nil, startError
+}
+
+func GetCurrentProxyPort() int {
+	serverMutex.Lock()
+	defer serverMutex.Unlock()
+	return currentPort
+}
+
+func GetCurrentProxyHost() string {
+	serverMutex.Lock()
+	defer serverMutex.Unlock()
+	return currentHost
 }

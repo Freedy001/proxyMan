@@ -1,4 +1,4 @@
-package model
+package common
 
 import (
 	"encoding/base64"
@@ -118,5 +118,3 @@ func (dc *DataChunk) GetDataSize() int {
 func (dc *DataChunk) IsEmpty() bool {
 	return len(dc.Data) == 0
 }
-
-var SummaryBodyCast = make(chan RequestSummary)

@@ -8,7 +8,7 @@ ProxyMan 是一个基于 Go 语言开发的 HTTP/HTTPS 代理服务器，具备�
 
 ## ✨ 功能特性
 
-![img_1.png](img_1.png)
+![img_1.png](doc/img_1.png)
 
 ### 🔐 代理功能
 - **HTTP/HTTPS 代理**：完全支持 HTTP 和 HTTPS 协议

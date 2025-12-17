@@ -4,38 +4,8 @@
 
 <script setup>
 import {ref, onMounted, onUnmounted, watch, nextTick} from 'vue'
-import * as monaco from 'monaco-editor';
-
-// --- 关键配置：开始 ---
-// 1. 导入 worker 脚本
-//    `?worker` 是 Vite 的语法，它会将脚本作为 web worker 加载
-import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
-import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker';
-import cssWorker from 'monaco-editor/esm/vs/language/css/css.worker?worker';
-import htmlWorker from 'monaco-editor/esm/vs/language/html/html.worker?worker';
-import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker';
-
-// 2. 配置 self.MonacoEnvironment
-//    注意：这里使用 self 而不是 window，是为了在 SSR 等环境下也能工作
-self.MonacoEnvironment = {
-  getWorker(_, label) {
-    if (label === 'json') {
-      return new jsonWorker();
-    }
-    if (label === 'css' || label === 'scss' || label === 'less') {
-      return new cssWorker();
-    }
-    if (label === 'html' || label === 'handlebars' || label === 'razor') {
-      return new htmlWorker();
-    }
-    if (label === 'typescript' || label === 'javascript') {
-      return new tsWorker();
-    }
-    // 默认返回通用的 editor worker
-    return new editorWorker();
-  },
-};
-// --- 关键配置：结束 ---
+// 使用按需加载的 Monaco 配置，减少包体积
+import monaco from '@/utils/MonacoConfig';
 
 
 const editorContainer = ref(null);

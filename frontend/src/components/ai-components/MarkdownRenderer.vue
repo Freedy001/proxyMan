@@ -8,7 +8,35 @@
 <script setup>
 import {computed, onMounted} from 'vue'
 import {marked} from 'marked'
-import hljs from 'highlight.js'
+// 按需加载 highlight.js 核心和常用语言，减少包体积
+import hljs from 'highlight.js/lib/core'
+import javascript from 'highlight.js/lib/languages/javascript'
+import typescript from 'highlight.js/lib/languages/typescript'
+import python from 'highlight.js/lib/languages/python'
+import json from 'highlight.js/lib/languages/json'
+import xml from 'highlight.js/lib/languages/xml'
+import css from 'highlight.js/lib/languages/css'
+import bash from 'highlight.js/lib/languages/bash'
+import go from 'highlight.js/lib/languages/go'
+import java from 'highlight.js/lib/languages/java'
+import rust from 'highlight.js/lib/languages/rust'
+import sql from 'highlight.js/lib/languages/sql'
+import shell from 'highlight.js/lib/languages/shell'
+
+// 注册需要的语言
+hljs.registerLanguage('javascript', javascript)
+hljs.registerLanguage('typescript', typescript)
+hljs.registerLanguage('python', python)
+hljs.registerLanguage('json', json)
+hljs.registerLanguage('xml', xml)
+hljs.registerLanguage('html', xml) // HTML 使用 xml 解析器
+hljs.registerLanguage('css', css)
+hljs.registerLanguage('bash', bash)
+hljs.registerLanguage('go', go)
+hljs.registerLanguage('java', java)
+hljs.registerLanguage('rust', rust)
+hljs.registerLanguage('sql', sql)
+hljs.registerLanguage('shell', shell)
 
 const props = defineProps({
   content: {
@@ -157,10 +185,9 @@ const renderedContent = computed(() => {
 
 // 在组件挂载后初始化代码高亮
 onMounted(() => {
-  // 确保 highlight.js 样式已加载
+  // 配置 highlight.js (按需加载版本不需要指定 languages)
   hljs.configure({
-    classPrefix: 'hljs-',
-    languages: ['javascript', 'typescript', 'python', 'java', 'go', 'rust', 'html', 'css', 'json', 'xml', 'bash', 'shell']
+    classPrefix: 'hljs-'
   })
 
   // 清理过期缓存

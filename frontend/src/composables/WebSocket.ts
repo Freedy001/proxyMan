@@ -1,9 +1,9 @@
 import {ref, type Ref} from 'vue'
+import {getWebSocketUrl} from '@/utils/Environment'
 
 export class WebSocketManager {
   private ws: WebSocket | null = null
 
-  private readonly maxReconnectAttempts: number = 5
   private readonly reconnectDelay: number = 1000
   private reconnectTimeout: number | null = null
   private reconnectAttempts: number = 0
@@ -12,7 +12,7 @@ export class WebSocketManager {
   public isConnecting: Ref<boolean> = ref(false)
   public error: Ref<string | null> = ref(null)
 
-  connect(path: string, onMessage: (data: any) => void, onError?: (error: Error) => void, needReconnect: boolean = false): void {
+  async connect(path: string, onMessage: (data: any) => void, onError?: (error: Error) => void, needReconnect: boolean = false): Promise<void> {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       return
     }
@@ -20,7 +20,8 @@ export class WebSocketManager {
     this.isConnecting.value = true
     this.error.value = null
 
-    const url = `${window.location.protocol.includes('https') ? 'wss' : 'ws'}://${window.location.host}${path.startsWith('/') ? path : '/' + path}`
+    // 使用新的 URL 构造方法
+    const url = await getWebSocketUrl(path)
 
     try {
       this.ws = new WebSocket(url)
@@ -49,13 +50,14 @@ export class WebSocketManager {
         this.isConnecting.value = false
         console.log(`WebSocket closed: ${event.code} ${event.reason}`)
 
-        if (needReconnect && !event.wasClean && this.reconnectAttempts < this.maxReconnectAttempts) {
+        if (needReconnect && !event.wasClean) {
           this.reconnectAttempts++
-          console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`)
+          console.log(`Attempting to reconnect (${this.reconnectAttempts})...`)
 
-          this.reconnectTimeout = window.setTimeout(() => {
-            this.connect(path, onMessage, onError, needReconnect)
-          }, this.reconnectDelay * this.reconnectAttempts)
+          this.reconnectTimeout = window.setTimeout(
+            () => this.connect(path, onMessage, onError, true),
+            Math.min(this.reconnectDelay * this.reconnectAttempts, 30_000)
+          )
         }
       }
 

@@ -3,10 +3,13 @@ package cert
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha1"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/pem"
+	"fmt"
 	"log"
 	"math/big"
 	"net"
@@ -21,6 +24,11 @@ type certCacheEntry struct {
 	cert      *tls.Certificate
 	expiresAt time.Time
 }
+
+var (
+	CAEmail string
+	CaSha1  string
+)
 
 var (
 	ca           *x509.Certificate
@@ -90,22 +98,33 @@ func startCacheCleanupRoutine() {
 
 // InitCA generates a new CA certificate and private key if they don't exist.
 func InitCA() {
-	if _, err := os.Stat("ca.crt"); os.IsNotExist(err) {
-		log.Println("Generating new CA...")
+	// Initialize certificate paths
+	if err := InitCertPaths(); err != nil {
+		log.Fatalf("Failed to initialize certificate paths: %v", err)
+	}
+
+	if _, err := os.Stat(CACertPath); os.IsNotExist(err) {
+		log.Printf("Generating new CA in %s...", CACertDir)
 		generateCA()
 	}
 	loadCA()
 
+	CAEmail = ca.EmailAddresses[0]
+	CaSha1 = fmt.Sprintf("%x", sha1.Sum(ca.Raw))
 	// 启动缓存清理例程
 	startCacheCleanupRoutine()
 }
 
 func generateCA() {
+	email := generateRandomEmail()
+
 	caTemplate := &x509.Certificate{
 		SerialNumber: big.NewInt(2023),
 		Subject: pkix.Name{
-			Organization: []string{"ProxyMan Inc."},
+			Organization: []string{"ProxyMan"},
+			CommonName:   "ProxyMan",
 		},
+		EmailAddresses:        []string{email},
 		NotBefore:             time.Now(),
 		NotAfter:              time.Now().AddDate(10, 0, 0),
 		IsCA:                  true,
@@ -125,20 +144,20 @@ func generateCA() {
 	}
 
 	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caBytes})
-	os.WriteFile("ca.crt", caPEM, 0644)
+	os.WriteFile(CACertPath, caPEM, 0644)
 
 	privKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privKey)})
-	os.WriteFile("ca.key", privKeyPEM, 0644)
-	log.Println("CA generated successfully.")
+	os.WriteFile(CAKeyPath, privKeyPEM, 0644)
+	log.Printf("CA generated successfully in %s with email: %s", CACertDir, email)
 }
 
 func loadCA() {
-	log.Println("Loading CA...")
-	caCert, err := os.ReadFile("ca.crt")
+	log.Printf("Loading CA from %s...", CACertDir)
+	caCert, err := os.ReadFile(CACertPath)
 	if err != nil {
 		log.Fatal(err)
 	}
-	caPrivKeyPEM, err := os.ReadFile("ca.key")
+	caPrivKeyPEM, err := os.ReadFile(CAKeyPath)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -256,4 +275,31 @@ func signHost(host string) (*tls.Certificate, error) {
 	}
 
 	return &tls.Certificate{Certificate: [][]byte{derBytes}, PrivateKey: private}, nil
+}
+
+// IsCertificateInstalled 检查证书是否已安装
+// 使用真实的系统检测，而不是标记文件
+func IsCertificateInstalled() (bool, error) {
+	// 首先检查证书文件是否存在
+	if _, err := os.Stat(CACertPath); os.IsNotExist(err) {
+		return false, nil
+	}
+
+	// 使用真实的系统检测
+	return CheckCertificateInstalled()
+}
+
+// generateRandomEmail generates a random email address for the certificate
+func generateRandomEmail() string {
+	// Generate 8 random bytes
+	randomBytes := make([]byte, 8)
+	if _, err := rand.Read(randomBytes); err != nil {
+		// Fallback to timestamp-based generation
+		return "proxyman@localhost"
+	}
+
+	// Convert to hex string
+	randomStr := hex.EncodeToString(randomBytes)
+
+	return "proxyman-" + randomStr + "@localhost"
 }

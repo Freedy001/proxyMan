@@ -52,7 +52,7 @@ export class RequestDetailsManager {
 
     // Connect to WebSocket for request details
     this.wsManager.connect(
-      `/ws/details/${requestId}`,
+      `/requests/details/${requestId}`,
       this.handleDataChunk.bind(this),
       this.handleError.bind(this)
     )

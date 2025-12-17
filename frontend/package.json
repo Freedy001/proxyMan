@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs --fix"
+    "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs --fix --ignore-path ../.gitignore"
   },
   "dependencies": {
     "highlight.js": "^11.11.1",
@@ -23,6 +23,8 @@
     "eslint": "^8.0.0",
     "eslint-plugin-vue": "^9.0.0",
     "prettier": "^3.0.0",
+    "rollup-plugin-visualizer": "^6.0.5",
+    "terser": "^5.44.1",
     "typescript": "^5.9.2",
     "vite": "^5.0.0",
     "vue-tsc": "^3.0.6"

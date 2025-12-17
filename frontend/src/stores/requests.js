@@ -48,7 +48,7 @@ export const useRequestsStore = defineStore('requests', () => {
 
   // WebSocket connection handlers
   const connect = () => {
-    wsManager.connect('/ws', handleRequestSummary, handleConnectionError, true)
+    wsManager.connect('/requests', handleRequestSummary, handleConnectionError, true)
   }
 
   const disconnect = () => {
