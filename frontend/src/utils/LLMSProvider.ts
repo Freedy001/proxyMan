@@ -60,6 +60,347 @@ export class OpenAIProvider implements LLMSProvider {
   }
 }
 
+export class OpenAIResponsesProvider implements LLMSProvider {
+  name = 'GPT-Responses';
+
+  parseRequest(body: string): OpenAI.ChatCompletionRequest | null {
+    try {
+      const req = JSON.parse(body) as OpenAI.Responses.Request;
+      const messages: OpenAI.ChatCompletionMessage[] = [];
+
+      if (req.instructions) {
+        messages.push({role: 'system', content: req.instructions});
+      }
+
+      if (typeof req.input === 'string') {
+        messages.push({role: 'user', content: req.input});
+      } else if (Array.isArray(req.input)) {
+        for (const item of req.input) {
+          const converted = this.convertInputItemToMessage(item);
+          if (converted) messages.push(converted);
+        }
+      }
+
+      let tools: OpenAI.Tool[] | undefined;
+      if (req.tools && req.tools.length > 0) {
+        tools = req.tools.map(t => ({
+          type: 'function' as const,
+          function: {name: t.name, description: t.description, parameters: t.parameters},
+        }));
+      }
+
+      return {
+        model: req.model,
+        messages,
+        temperature: req.temperature,
+        top_p: req.top_p,
+        max_tokens: req.max_output_tokens,
+        stream: req.stream,
+        tools,
+        tool_choice: tools?.length ? 'auto' : undefined,
+      };
+    } catch (e) {
+      console.error('Failed to parse OpenAI Responses request:', e);
+      return null;
+    }
+  }
+
+  parseResponse(body: string): OpenAI.ChatCompletionResponse | null {
+    try {
+      const resp = JSON.parse(body) as OpenAI.Responses.Response;
+      const raw = JSON.parse(body);
+      const outputMessage = this.convertOutputToMessage(resp.output);
+
+      const inputDetails = raw.usage?.input_tokens_details;
+      const outputDetails = raw.usage?.output_tokens_details;
+
+      return {
+        id: resp.id,
+        object: 'chat.completion',
+        created: resp.created_at,
+        model: resp.model,
+        choices: outputMessage ? [{
+          index: 0,
+          message: outputMessage,
+          logprobs: null,
+          finish_reason: resp.status === 'completed' ? 'stop' : null,
+        }] : [],
+        usage: resp.usage ? {
+          prompt_tokens: resp.usage.input_tokens,
+          completion_tokens: resp.usage.output_tokens,
+          total_tokens: resp.usage.total_tokens,
+          cached_tokens: inputDetails?.cached_tokens,
+          reasoning_tokens: outputDetails?.reasoning_tokens,
+        } : {prompt_tokens: 0, completion_tokens: 0, total_tokens: 0},
+      };
+    } catch (e) {
+      console.error('Failed to parse OpenAI Responses response:', e);
+      return null;
+    }
+  }
+
+  parseChunk(chunk: string): OpenAI.Chunk | null {
+    if (!chunk.startsWith('data: ')) return null;
+
+    const jsonData = chunk.slice(6).trim();
+    if (jsonData === '[DONE]') {
+      return {
+        id: 'responses-end',
+        object: 'chat.completion.chunk',
+        created: Math.floor(Date.now() / 1000),
+        model: 'gpt-responses',
+        choices: [{index: 0, delta: {}, finish_reason: 'stop'}],
+      };
+    }
+
+    try {
+      const event = JSON.parse(jsonData) as OpenAI.Responses.StreamEvent;
+
+      switch (event.type) {
+        case 'response.created':
+        case 'response.in_progress': {
+          const e = event as OpenAI.Responses.ResponseCreatedEvent;
+          return {
+            id: e.response.id,
+            object: 'chat.completion.chunk',
+            created: e.response.created_at,
+            model: e.response.model,
+            choices: [{index: 0, delta: {role: 'assistant'}, finish_reason: null}],
+          };
+        }
+
+        case 'response.output_item.added': {
+          const e = event as OpenAI.Responses.OutputItemAddedEvent;
+          if (e.item.type === 'function_call') {
+            const fc = e.item as OpenAI.Responses.FunctionCallOutputItem;
+            return {
+              id: fc.id,
+              object: 'chat.completion.chunk',
+              created: Math.floor(Date.now() / 1000),
+              model: 'gpt-responses',
+              choices: [{
+                index: e.output_index,
+                delta: {
+                  tool_calls: [{
+                    index: e.output_index,
+                    id: fc.call_id || fc.id,
+                    type: 'function',
+                    function: {name: fc.name, arguments: ''},
+                  }],
+                },
+                finish_reason: null,
+              }],
+            };
+          }
+          return null;
+        }
+
+        case 'response.output_text.delta': {
+          const e = event as OpenAI.Responses.OutputTextDeltaEvent;
+          return {
+            id: e.item_id,
+            object: 'chat.completion.chunk',
+            created: Math.floor(Date.now() / 1000),
+            model: 'gpt-responses',
+            choices: [{index: e.output_index, delta: {content: e.delta}, finish_reason: null}],
+          };
+        }
+
+        case 'response.reasoning_summary_text.delta': {
+          const e = event as any;
+          return {
+            id: e.item_id || 'reasoning',
+            object: 'chat.completion.chunk',
+            created: Math.floor(Date.now() / 1000),
+            model: 'gpt-responses',
+            choices: [{index: e.output_index ?? 0, delta: {content: e.delta}, finish_reason: null}],
+          };
+        }
+
+        case 'response.output_item.done': {
+          const e = event as OpenAI.Responses.OutputItemDoneEvent;
+          if (e.item.type === 'function_call') {
+            const fc = e.item as OpenAI.Responses.FunctionCallOutputItem;
+            return {
+              id: fc.id,
+              object: 'chat.completion.chunk',
+              created: Math.floor(Date.now() / 1000),
+              model: 'gpt-responses',
+              choices: [{
+                index: e.output_index,
+                delta: {
+                  tool_calls: [{
+                    index: e.output_index,
+                    id: fc.call_id || fc.id,
+                    type: 'function',
+                    function: {name: fc.name, arguments: fc.arguments},
+                  }],
+                },
+                finish_reason: 'tool_calls',
+              }],
+            };
+          }
+          return null;
+        }
+
+        case 'response.completed': {
+          const e = event as OpenAI.Responses.ResponseCompletedEvent;
+          const rawUsage = (event as any).response?.usage;
+          const inputDetails = rawUsage?.input_tokens_details;
+          const outputDetails = rawUsage?.output_tokens_details;
+          return {
+            id: e.response.id,
+            object: 'chat.completion.chunk',
+            created: e.response.created_at,
+            model: e.response.model,
+            choices: [{index: 0, delta: {}, finish_reason: 'stop'}],
+            usage: e.response.usage ? {
+              prompt_tokens: e.response.usage.input_tokens,
+              completion_tokens: e.response.usage.output_tokens,
+              total_tokens: e.response.usage.total_tokens,
+              cached_tokens: inputDetails?.cached_tokens,
+              reasoning_tokens: outputDetails?.reasoning_tokens,
+            } : undefined,
+          };
+        }
+
+        default:
+          return null;
+      }
+    } catch (e) {
+      console.error('Failed to parse OpenAI Responses chunk:', e);
+      return null;
+    }
+  }
+
+  private convertInputItemToMessage(item: any): OpenAI.ChatCompletionMessage | null {
+    if (typeof item === 'string') {
+      return {role: 'user', content: item};
+    }
+
+    if (item.type === 'function_call') {
+      return {
+        role: 'assistant',
+        content: null,
+        tool_calls: [{
+          id: item.call_id || item.id,
+          type: 'function',
+          function: {name: item.name, arguments: item.arguments || ''},
+        }],
+      };
+    }
+
+    if (item.type === 'function_call_output') {
+      return {
+        role: 'tool',
+        tool_call_id: item.call_id,
+        content: typeof item.output === 'string' ? item.output : JSON.stringify(item.output),
+      };
+    }
+
+    // Handle reasoning/thinking items (o1, o3, gpt-5.5 etc.)
+    if (item.type === 'reasoning') {
+      const summaryTexts: string[] = [];
+      if (Array.isArray(item.summary)) {
+        for (const s of item.summary) {
+          if (s.type === 'summary_text' && s.text?.trim()) {
+            summaryTexts.push(s.text);
+          }
+        }
+      }
+      if (summaryTexts.length === 0) return null;
+      return {role: 'assistant', content: summaryTexts.join('\n')};
+    }
+
+    // Handle type: 'message' items (Responses API output items passed back as input)
+    if (item.type === 'message') {
+      const role = (item.role as Role) || 'assistant';
+      if (!Array.isArray(item.content)) return null;
+
+      const parts: OpenAI.ContentPart[] = [];
+      for (const part of item.content) {
+        if (part.type === 'input_text' || part.type === 'output_text' || part.type === 'text') {
+          if (part.text?.trim()) parts.push({type: 'text', text: part.text});
+        } else if (part.type === 'input_image' || part.type === 'image_url') {
+          const imageUrl = part.image_url?.url || part.image_url || '';
+          if (imageUrl) parts.push({type: 'image_url', image_url: {url: imageUrl, detail: part.detail}});
+        } else if (part.type === 'refusal' && part.refusal?.trim()) {
+          parts.push({type: 'text', text: `[Refusal] ${part.refusal}`});
+        }
+      }
+
+      if (parts.length === 0) return null;
+      return {role, content: parts};
+    }
+
+    if (!item.role) return null;
+
+    if (typeof item.content === 'string') {
+      return item.content?.trim() ? {role: item.role as Role, content: item.content} : null;
+    }
+
+    if (!Array.isArray(item.content)) return null;
+
+    const parts: OpenAI.ContentPart[] = [];
+    for (const part of item.content) {
+      if (part.type === 'input_text' || part.type === 'output_text' || part.type === 'text') {
+        if (part.text?.trim()) parts.push({type: 'text', text: part.text});
+      } else if (part.type === 'input_image' || part.type === 'image_url') {
+        const imageUrl = part.image_url?.url || part.image_url || '';
+        if (imageUrl) parts.push({type: 'image_url', image_url: {url: imageUrl, detail: part.detail}});
+      } else if (part.type === 'refusal' && part.refusal?.trim()) {
+        parts.push({type: 'text', text: `[Refusal] ${part.refusal}`});
+      }
+    }
+
+    if (parts.length === 0) return null;
+    return {role: item.role as Role, content: parts};
+  }
+
+  private convertOutputToMessage(output: OpenAI.Responses.OutputItem[]): OpenAI.ChatCompletionMessage | null {
+    const textParts: string[] = [];
+    const toolCalls: OpenAI.ToolCall[] = [];
+
+    for (const item of output) {
+      if (item.type === 'message' && item.role === 'assistant') {
+        const msgItem = item as OpenAI.Responses.MessageOutputItem;
+        if (msgItem.content) {
+          for (const part of msgItem.content) {
+            if (part.type === 'output_text') {
+              const text = (part as OpenAI.Responses.OutputTextContent).text;
+              if (text?.trim()) textParts.push(text);
+            }
+          }
+        }
+      } else if (item.type === 'function_call') {
+        const fcItem = item as OpenAI.Responses.FunctionCallOutputItem;
+        toolCalls.push({
+          id: fcItem.call_id || fcItem.id,
+          type: 'function',
+          function: {name: fcItem.name, arguments: fcItem.arguments},
+        });
+      } else if (item.type === 'reasoning') {
+        const reasoningItem = item as OpenAI.Responses.ReasoningOutputItem;
+        if (reasoningItem.summary) {
+          for (const s of reasoningItem.summary) {
+            if (s.type === 'summary_text' && s.text?.trim()) {
+              textParts.push(s.text);
+            }
+          }
+        }
+      }
+    }
+
+    if (textParts.length === 0 && toolCalls.length === 0) return null;
+
+    return {
+      role: 'assistant',
+      content: textParts.length > 0 ? textParts.join('') : null,
+      tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+    };
+  }
+}
+
 export class AnthropicProvider implements LLMSProvider {
   name = 'Anthropic';
 
@@ -194,6 +535,7 @@ export class AnthropicProvider implements LLMSProvider {
     // ... (implementation from original file, with added try/catch)
     try {
       const anthropicResponse = JSON.parse(body) as Anthropic.MessageResponse;
+      const rawAnthropic = JSON.parse(body);
 
       // Convert Anthropic content to OpenAI message format
       let content: string | null = null;
@@ -259,7 +601,9 @@ export class AnthropicProvider implements LLMSProvider {
         usage: {
           prompt_tokens: anthropicResponse.usage.input_tokens,
           completion_tokens: anthropicResponse.usage.output_tokens,
-          total_tokens: anthropicResponse.usage.input_tokens + anthropicResponse.usage.output_tokens
+          total_tokens: anthropicResponse.usage.input_tokens + anthropicResponse.usage.output_tokens,
+          cached_tokens: (rawAnthropic.usage?.cache_read_input_tokens ?? 0) + (rawAnthropic.usage?.cache_creation_input_tokens ?? 0) || undefined,
+          reasoning_tokens: rawAnthropic.usage?.thinking_tokens,
         }
       } as OpenAI.ChatCompletionResponse;
     } catch (e) {
@@ -762,9 +1106,13 @@ export class GeminiCliProvider implements LLMSProvider {
 
 // AI API URL 模式
 const AI_URL_PATTERNS: { provider: string, pattern: RegExp }[] = [
-  // OpenAI API
+  // OpenAI Chat Completions API
   {provider: 'openai', pattern: /\/v1\/chat\/completions$/},
   {provider: 'openai', pattern: /\/chat\/completions$/},
+
+  // OpenAI Responses API
+  {provider: 'openai-responses', pattern: /\/v1\/responses(\?.*)?$/},
+  {provider: 'openai-responses', pattern: /\/responses(\?.*)?$/},
 
   // Anthropic API
   {provider: 'anthropic', pattern: /\/v1\/messages(\?.*)?$/},
@@ -786,6 +1134,8 @@ export function getAIProvider(url: string, method: string): LLMSProvider | null 
       switch (p.provider) {
         case 'openai':
           return new OpenAIProvider();
+        case 'openai-responses':
+          return new OpenAIResponsesProvider();
         case 'anthropic':
           return new AnthropicProvider();
         case 'gemini-cli':

@@ -17,17 +17,17 @@
             {{ aiProvider?.name ?? 'Unknown' }}
           </span>
           <span class="model-info" v-if="requestData?.model">{{ requestData?.model }}</span>
+          <span class="token-stats" v-if="usage && usage.total_tokens">
+            in:{{ formatTokenNumber(usage.prompt_tokens) }}
+            out:{{ formatTokenNumber(usage.completion_tokens) }}
+            <template v-if="usage.reasoning_tokens">think:{{ formatTokenNumber(usage.reasoning_tokens) }}</template>
+            <template v-if="usage.cached_tokens">cache:{{ formatTokenNumber(usage.cached_tokens) }}</template>
+            total:{{ formatTokenNumber(usage.total_tokens) }}
+            tps:{{ tps }}
+            <template v-if="reasoningDuration > 0">thinkTime:{{ formatDuration(reasoningDuration) }}</template>
+          </span>
         </div>
         <div class="chat-controls">
-          <button
-              class="control-button"
-              :class="{ active: showMetadata }"
-              @click="toggleMetadata"
-              title="Toggle metadata"
-          >
-            <span class="control-icon">📊</span>
-            <span class="control-text">Metadata</span>
-          </button>
           <button
               class="control-button"
               :class="{ active: autoScroll }"
@@ -37,32 +37,6 @@
             <span class="control-icon">📄</span>
             <span class="control-text">Auto-scroll</span>
           </button>
-        </div>
-      </div>
-
-      <!-- Metadata Panel -->
-      <div v-if="showMetadata" class="metadata-panel">
-        <div class="metadata-grid">
-          <div v-if="requestData?.model" class="metadata-item">
-            <label>Model:</label>
-            <span>{{ requestData.model }}</span>
-          </div>
-          <div v-if="requestData?.temperature !== undefined" class="metadata-item">
-            <label>Temperature:</label>
-            <span>{{ requestData.temperature }}</span>
-          </div>
-          <div v-if="requestData?.max_tokens" class="metadata-item">
-            <label>Max Tokens:</label>
-            <span>{{ requestData.max_tokens }}</span>
-          </div>
-          <div v-if="usage" class="metadata-item">
-            <label>Token Usage:</label>
-            <span>{{ formatTokenUsage(usage) }}</span>
-          </div>
-          <div v-if="requestData?.stream !== undefined" class="metadata-item">
-            <label>Stream:</label>
-            <span>{{ requestData.stream ? 'Yes' : 'No' }}</span>
-          </div>
         </div>
       </div>
 
@@ -166,10 +140,13 @@ const props = defineProps<{
 
 // Refs
 const messagesContainer = ref<Element>()
-const showMetadata = ref(false)
 const autoScroll = ref(true)
 const error = ref('')
 const usage = ref<OpenAI.Usage | null>(null)
+const startTime = ref(0)
+const endTime = ref(0)
+const reasoningStartTime = ref(0)
+const reasoningEndTime = ref(0)
 
 // 请求和响应数据
 const requestData = computed<OpenAI.ChatCompletionRequest | null>(() => {
@@ -189,14 +166,26 @@ const systemMessage = computed(() => {
   return systemMsg?.content
 })
 
-// 解析流式数据
+// 解析流式数据（含推理时间跟踪）
 const parseStreamData = (responseBody?: string): OpenAI.Chunk[] => {
   if (!responseBody || !props.aiProvider) return []
 
   const chunks: OpenAI.Chunk[] = []
+  let isReasoning = false
 
   for (const line of responseBody.split('\n')) {
     if (line.startsWith('data: ')) {
+      const isReasoningDelta = line.includes('reasoning_summary_text.delta') || line.includes('thinking_delta')
+      const isOutputDelta = line.includes('response.output_text.delta') || line.includes('response.output_item.added')
+
+      if (isReasoningDelta && !isReasoning) {
+        isReasoning = true
+        reasoningStartTime.value = Date.now()
+        reasoningEndTime.value = 0
+      } else if (isReasoning && isOutputDelta && !reasoningEndTime.value) {
+        reasoningEndTime.value = Date.now()
+      }
+
       try {
         const chunk = props.aiProvider.parseChunk(line)
         if (chunk) chunks.push(chunk)
@@ -287,10 +276,6 @@ const displayMessages = computed<Message[]>(() => {
       // 将累积的工具调用添加到消息中
       if (toolCallsMap.size > 0) {
         assistantMessage.tool_calls = Array.from(toolCallsMap.values())
-      }
-
-
-      if (assistantMessage.content || assistantMessage.tool_calls.length > 0) {
         messages.push(assistantMessage as Message)
       }
 
@@ -332,8 +317,6 @@ const getMessageClass = (message: Message) => {
   return classes
 }
 
-
-// 获取文本内容
 const getTextContent = (message: Message) => {
   if (typeof message.content === 'string') {
     return message.content
@@ -375,23 +358,39 @@ const getImageContent = (message: Message) => {
   return []
 }
 
+// 格式化 token 数字，自动适配单位
+const formatTokenNumber = (num: number): string => {
+  if (num >= 1000000) return (num / 1000000).toFixed(1).replace(/\.0$/, '') + 'M'
+  if (num >= 1000) return (num / 1000).toFixed(num >= 10000 ? 0 : 1).replace(/\.0$/, '') + 'k'
+  return String(num)
+}
 
-// 格式化 token 使用量
-const formatTokenUsage = (usage: OpenAI.Usage) => {
-  if (!usage) return ''
+// TPS 计算（包含推理token）
+const tps = computed(() => {
+  if (!usage.value || !startTime.value) return '--'
+  const outputTokens = usage.value.completion_tokens + (usage.value.reasoning_tokens ?? 0)
+  if (!outputTokens) return '--'
+  const duration = ((endTime.value || Date.now()) - startTime.value) / 1000
+  if (duration <= 0) return '--'
+  const tpsValue = outputTokens / duration
+  return tpsValue >= 100 ? String(Math.round(tpsValue)) : tpsValue.toFixed(1)
+})
 
-  const parts = []
-  if (usage.prompt_tokens) parts.push(`${usage.prompt_tokens} prompt`)
-  if (usage.completion_tokens) parts.push(`${usage.completion_tokens} completion`)
-  if (usage.total_tokens) parts.push(`${usage.total_tokens} total`)
+// 推理耗时（秒）
+const reasoningDuration = computed(() => {
+  if (!reasoningStartTime.value) return 0
+  const end = reasoningEndTime.value || Date.now()
+  return (end - reasoningStartTime.value) / 1000
+})
 
-  return parts.join(', ')
+// 格式化耗时显示
+const formatDuration = (sec: number): string => {
+  if (sec >= 60) return (sec / 60).toFixed(1) + 'm'
+  if (sec >= 1) return sec.toFixed(1) + 's'
+  return (sec * 1000).toFixed(0) + 'ms'
 }
 
 // 控制方法
-const toggleMetadata = () => {
-  showMetadata.value = !showMetadata.value
-}
 
 const toggleAutoScroll = () => {
   autoScroll.value = !autoScroll.value
@@ -425,8 +424,29 @@ watch(() => props.responseBody, () => {
   }
 })
 
+// 监听请求体变化，记录开始时间
+watch(() => props.requestBody, (newVal) => {
+  if (newVal) {
+    startTime.value = Date.now()
+    endTime.value = 0
+    reasoningStartTime.value = 0
+    reasoningEndTime.value = 0
+    usage.value = null
+  }
+})
+
+// 监听完成状态
+watch(() => props.finished, (newVal) => {
+  if (newVal && startTime.value) {
+    endTime.value = Date.now()
+  }
+})
+
 // 生命周期
 onMounted(() => {
+  if (props.requestBody) {
+    startTime.value = Date.now()
+  }
   scrollToBottom()
 })
 </script>
@@ -513,6 +533,11 @@ onMounted(() => {
   color: white;
 }
 
+.provider-gpt-responses {
+  background: #6c47ff;
+  color: white;
+}
+
 .provider-generic {
   background: var(--color-accent);
   color: white;
@@ -525,6 +550,14 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.token-stats {
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  font-size: var(--font-size-small);
+  color: var(--color-foreground-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .chat-controls {
@@ -569,43 +602,6 @@ onMounted(() => {
   .control-text {
     display: inline;
   }
-}
-
-.metadata-panel {
-  padding: var(--spacing-md);
-  background: var(--color-background-elevation-1);
-  border-bottom: 1px solid var(--color-border);
-  flex-shrink: 0;
-}
-
-.metadata-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: var(--spacing-sm);
-}
-
-.metadata-item {
-  margin: 0 10px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.metadata-item label {
-  font-weight: 500;
-  color: var(--color-foreground-secondary);
-  margin-right: var(--spacing-xs);
-}
-
-.metadata-item span {
-  font-family: 'SFMono-Regular', Consolas, monospace;
-  font-size: var(--font-size-small);
-  text-align: right;
-  flex: 1;
-}
-
-.monospace {
-  font-family: 'SFMono-Regular', Consolas, monospace;
 }
 
 .messages-container {
@@ -812,10 +808,6 @@ onMounted(() => {
     padding: var(--spacing-xs) var(--spacing-sm);
   }
 
-  .metadata-grid {
-    grid-template-columns: 1fr;
-  }
-
   .messages-container {
     padding: var(--spacing-sm);
   }
@@ -830,10 +822,6 @@ onMounted(() => {
   .messages-container {
     padding: var(--spacing-md);
   }
-
-  .metadata-grid {
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  }
 }
 
 /* 响应式设计 - 大屏幕 */
@@ -844,10 +832,6 @@ onMounted(() => {
 
   .message-content {
     padding: var(--spacing-md);
-  }
-
-  .metadata-grid {
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   }
 }
 
@@ -868,17 +852,7 @@ onMounted(() => {
 }
 
 /* 容器查询 - 基于组件宽度的响应式 */
-@container (min-width: 400px) {
-  .metadata-grid {
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  }
-}
-
 @container (min-width: 600px) {
-  .metadata-grid {
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  }
-
   .message-content {
     padding: var(--spacing-md);
   }

@@ -84,6 +84,9 @@ export namespace OpenAI {
     prompt_tokens: number;
     completion_tokens: number;
     total_tokens: number;
+    cached_tokens?: number;
+    reasoning_tokens?: number;
+    thinking_time_ms?: number;
   }
 
   export interface Chunk {
@@ -107,6 +110,176 @@ export namespace OpenAI {
 
   export interface DeltaToolCall extends ToolCall {
     index: number;
+  }
+
+  // GPT Responses API types
+  export namespace Responses {
+    export interface InputTextContent {
+      type: 'input_text';
+      text: string;
+    }
+
+    export interface InputImageContent {
+      type: 'input_image';
+      image_url?: string;
+      detail?: 'low' | 'high' | 'auto';
+    }
+
+    export type InputContentPart = InputTextContent | InputImageContent;
+
+    export interface InputItem {
+      type?: 'message' | 'function_call' | 'function_call_output' | 'reasoning';
+      role?: 'user' | 'assistant' | 'system' | 'developer';
+      content?: string | InputContentPart[];
+      // For function_call items
+      id?: string;
+      call_id?: string;
+      name?: string;
+      arguments?: string;
+      // For function_call_output items
+      output?: string;
+      // For reasoning items
+      summary?: { type: 'summary_text'; text: string }[];
+      encrypted_content?: string;
+      status?: string;
+    }
+
+    export interface Tool {
+      type: 'function';
+      name: string;
+      description?: string;
+      parameters?: Record<string, unknown>;
+      strict?: boolean;
+    }
+
+    export interface Request {
+      model: string;
+      input: string | InputItem[] | any[];
+      instructions?: string;
+      stream?: boolean;
+      temperature?: number;
+      max_output_tokens?: number;
+      top_p?: number;
+      tools?: Tool[];
+      tool_choice?: string | object;
+      previous_response_id?: string;
+      include?: string[];
+      reasoning?: { effort?: string; encrypted_content?: boolean; summary?: string };
+    }
+
+    // Output types
+    export interface OutputTextContent {
+      type: 'output_text';
+      text: string;
+      annotations: any[];
+    }
+
+    export interface MessageOutputItem {
+      type: 'message';
+      id: string;
+      status: 'in_progress' | 'completed' | 'incomplete';
+      role: 'assistant';
+      content: OutputTextContent[];
+    }
+
+    export interface FunctionCallOutputItem {
+      type: 'function_call';
+      id: string;
+      status: 'in_progress' | 'completed' | 'incomplete';
+      call_id: string;
+      name: string;
+      arguments: string;
+    }
+
+    export interface ReasoningOutputItem {
+      type: 'reasoning';
+      id: string;
+      summary?: { type: 'summary_text'; text: string }[];
+      encrypted_content?: string;
+      status?: string;
+    }
+
+    export type OutputItem = MessageOutputItem | FunctionCallOutputItem | ReasoningOutputItem;
+
+    export interface Usage {
+      input_tokens: number;
+      output_tokens: number;
+      total_tokens: number;
+    }
+
+    export interface Response {
+      id: string;
+      object: 'response';
+      created_at: number;
+      model: string;
+      output: OutputItem[];
+      usage?: Usage;
+      status: 'completed' | 'in_progress' | 'incomplete' | 'failed';
+      instructions?: string;
+    }
+
+    // Streaming event types
+    export interface ResponseCreatedEvent {
+      type: 'response.created';
+      response: Response;
+    }
+
+    export interface ResponseInProgressEvent {
+      type: 'response.in_progress';
+      response: Response;
+    }
+
+    export interface OutputItemAddedEvent {
+      type: 'response.output_item.added';
+      item: OutputItem;
+      output_index: number;
+    }
+
+    export interface ContentPartAddedEvent {
+      type: 'response.content_part.added';
+      part: OutputTextContent;
+      item_id: string;
+      output_index: number;
+      content_index: number;
+    }
+
+    export interface OutputTextDeltaEvent {
+      type: 'response.output_text.delta';
+      delta: string;
+      item_id: string;
+      output_index: number;
+      content_index: number;
+    }
+
+    export interface ReasoningSummaryTextDeltaEvent {
+      type: 'response.reasoning_summary_text.delta';
+      delta: string;
+      item_id: string;
+      output_index: number;
+      summary_index: number;
+    }
+
+    export interface OutputItemDoneEvent {
+      type: 'response.output_item.done';
+      item: OutputItem;
+      output_index: number;
+    }
+
+    export interface ResponseCompletedEvent {
+      type: 'response.completed';
+      response: Response;
+    }
+
+    export type StreamEvent =
+        | ResponseCreatedEvent
+        | ResponseInProgressEvent
+        | OutputItemAddedEvent
+        | ContentPartAddedEvent
+        | OutputTextDeltaEvent
+        | ReasoningSummaryTextDeltaEvent
+        | OutputItemDoneEvent
+        | ResponseCompletedEvent
+        | { type: string; [key: string]: any }; // Allow unknown event types
   }
 }
 
