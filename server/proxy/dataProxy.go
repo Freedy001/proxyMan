@@ -16,7 +16,7 @@ import (
 type DataCb func(dataType common.DataType, data []byte, timestamp time.Time, finished bool)
 
 const (
-	cacheSize   = 1000
+	cacheSize   = 200
 	maxBodySize = 100 * 1024 * 1024 //100MM
 )
 
@@ -117,6 +117,7 @@ func (p *DataProxy) reportRequest(req *http.Request) {
 	p.Contents.Method = req.Method
 	p.Contents.Host = req.Host
 	p.Contents.URL = fullURL
+	p.Contents.Protocol = req.Proto
 	p.Contents.RequestHeaders = req.Header
 	p.state = common.RequestHeader
 

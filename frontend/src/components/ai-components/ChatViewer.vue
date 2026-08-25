@@ -134,6 +134,8 @@ const props = defineProps<{
   requestBody?: string
   responseBody?: string
   url?: string
+  startTime?: string | number
+  endTime?: string | number
   finished?: boolean
   aiProvider?: LLMSProvider
 }>()
@@ -142,7 +144,6 @@ const props = defineProps<{
 const messagesContainer = ref<Element>()
 const autoScroll = ref(true)
 const error = ref('')
-const usage = ref<OpenAI.Usage | null>(null)
 const startTime = ref(0)
 const endTime = ref(0)
 const reasoningStartTime = ref(0)
@@ -166,26 +167,14 @@ const systemMessage = computed(() => {
   return systemMsg?.content
 })
 
-// 解析流式数据（含推理时间跟踪）
+// 解析流式数据
 const parseStreamData = (responseBody?: string): OpenAI.Chunk[] => {
   if (!responseBody || !props.aiProvider) return []
 
   const chunks: OpenAI.Chunk[] = []
-  let isReasoning = false
 
   for (const line of responseBody.split('\n')) {
     if (line.startsWith('data: ')) {
-      const isReasoningDelta = line.includes('reasoning_summary_text.delta') || line.includes('thinking_delta')
-      const isOutputDelta = line.includes('response.output_text.delta') || line.includes('response.output_item.added')
-
-      if (isReasoningDelta && !isReasoning) {
-        isReasoning = true
-        reasoningStartTime.value = Date.now()
-        reasoningEndTime.value = 0
-      } else if (isReasoning && isOutputDelta && !reasoningEndTime.value) {
-        reasoningEndTime.value = Date.now()
-      }
-
       try {
         const chunk = props.aiProvider.parseChunk(line)
         if (chunk) chunks.push(chunk)
@@ -197,6 +186,25 @@ const parseStreamData = (responseBody?: string): OpenAI.Chunk[] => {
 
   return chunks
 }
+
+const usage = computed<OpenAI.Usage | null>(() => {
+  try {
+    if (!props.responseBody || !props.aiProvider) return null
+
+    if (isStreamResponse(props.responseBody)) {
+      let latestUsage: OpenAI.Usage | null = null
+      parseStreamData(props.responseBody).forEach(chunk => {
+        if (chunk.usage) latestUsage = chunk.usage
+      })
+      return latestUsage
+    }
+
+    return props.aiProvider.parseResponse(props.responseBody)?.usage ?? null
+  } catch (e) {
+    console.warn('Failed to parse AI usage:', e)
+    return null
+  }
+})
 
 interface Message extends OpenAI.ChatCompletionMessage {
   id: string
@@ -236,8 +244,6 @@ const displayMessages = computed<Message[]>(() => {
 
       // 合并流式数据块
       streamChunks.forEach(chunk => {
-        if (chunk?.usage) usage.value = chunk.usage
-
         // 处理文本内容
         if (chunk.choices?.[0]?.delta?.content) {
           assistantMessage.content += chunk.choices[0].delta.content
@@ -276,6 +282,9 @@ const displayMessages = computed<Message[]>(() => {
       // 将累积的工具调用添加到消息中
       if (toolCallsMap.size > 0) {
         assistantMessage.tool_calls = Array.from(toolCallsMap.values())
+      }
+
+      if (assistantMessage.content || assistantMessage.tool_calls.length > 0) {
         messages.push(assistantMessage as Message)
       }
 
@@ -283,7 +292,6 @@ const displayMessages = computed<Message[]>(() => {
       // 处理普通响应
       if (props.responseBody) {
         let response = props.aiProvider?.parseResponse(props.responseBody);
-        if (response?.usage) usage.value = response.usage
         response?.choices.forEach((choice, idx) => {
           if (choice.message) {
             messages.push({
@@ -365,12 +373,21 @@ const formatTokenNumber = (num: number): string => {
   return String(num)
 }
 
+const parseTimeMs = (value?: string | number): number => {
+  if (!value) return 0
+  const time = typeof value === 'number' ? value : new Date(value).getTime()
+  return Number.isNaN(time) ? 0 : time
+}
+
+const requestStartMs = computed(() => parseTimeMs(props.startTime) || startTime.value)
+const requestEndMs = computed(() => parseTimeMs(props.endTime) || endTime.value)
+
 // TPS 计算（包含推理token）
 const tps = computed(() => {
-  if (!usage.value || !startTime.value) return '--'
+  if (!usage.value || !requestStartMs.value) return '--'
   const outputTokens = usage.value.completion_tokens + (usage.value.reasoning_tokens ?? 0)
   if (!outputTokens) return '--'
-  const duration = ((endTime.value || Date.now()) - startTime.value) / 1000
+  const duration = ((requestEndMs.value || Date.now()) - requestStartMs.value) / 1000
   if (duration <= 0) return '--'
   const tpsValue = outputTokens / duration
   return tpsValue >= 100 ? String(Math.round(tpsValue)) : tpsValue.toFixed(1)
@@ -418,7 +435,24 @@ watch(() => displayMessages.value.length, () => {
 })
 
 // 监听响应体变化（流式更新）
-watch(() => props.responseBody, () => {
+watch(() => props.responseBody, (newVal, oldVal) => {
+  if (newVal && !startTime.value) {
+    startTime.value = Date.now()
+  }
+
+  const current = newVal ?? ''
+  const previous = oldVal ?? ''
+  const appended = current.startsWith(previous) ? current.slice(previous.length) : current
+  const hasReasoningDelta = appended.includes('reasoning_summary_text.delta') || appended.includes('thinking_delta')
+  const hasOutputDelta = appended.includes('response.output_text.delta') || appended.includes('text_delta')
+
+  if (hasReasoningDelta && !reasoningStartTime.value) {
+    reasoningStartTime.value = Date.now()
+    reasoningEndTime.value = 0
+  } else if (hasOutputDelta && reasoningStartTime.value && !reasoningEndTime.value) {
+    reasoningEndTime.value = Date.now()
+  }
+
   if (autoScroll.value) {
     scrollToBottom()
   }
@@ -431,7 +465,6 @@ watch(() => props.requestBody, (newVal) => {
     endTime.value = 0
     reasoningStartTime.value = 0
     reasoningEndTime.value = 0
-    usage.value = null
   }
 })
 
@@ -439,6 +472,9 @@ watch(() => props.requestBody, (newVal) => {
 watch(() => props.finished, (newVal) => {
   if (newVal && startTime.value) {
     endTime.value = Date.now()
+    if (reasoningStartTime.value && !reasoningEndTime.value) {
+      reasoningEndTime.value = endTime.value
+    }
   }
 })
 

@@ -37,6 +37,8 @@ type RequestSummary struct {
 	Method string `json:"method"`
 	Host   string `json:"host"`
 	URL    string `json:"url"`
+	// 协议版本，例如 HTTP/1.1 或 HTTP/2.0
+	Protocol string `json:"protocol"`
 	//响应数据
 	ContentType string `json:"contentType"`
 	StatusCode  int    `json:"statusCode"`

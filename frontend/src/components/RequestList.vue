@@ -81,6 +81,7 @@ const columnOrder = ref([
   {key: 'url', label: 'URL'},
   {key: 'statusCode', label: 'Status'},
   {key: 'method', label: 'Method'},
+  {key: 'protocol', label: 'Protocol'},
   {key: 'contentType', label: 'Type'},
   {key: 'startTime', label: 'Time'},
   {key: 'duration', label: 'Duration'}
@@ -163,6 +164,7 @@ const getColumnClass = (columnKey) => {
     'url': 'url-cell',
     'statusCode': (request) => requestsStore.getStatusClass(request.statusCode),
     'method': (request) => requestsStore.getMethodClass(request.method),
+    'protocol': 'protocol-cell',
     'contentType': 'type-cell',
     'startTime': 'time-cell',
     'duration': 'time-cell'
@@ -173,6 +175,7 @@ const getColumnClass = (columnKey) => {
 const getCellTitle = (columnKey, request) => {
   if (columnKey === 'host') return request.host
   if (columnKey === 'url') return request.url
+  if (columnKey === 'protocol') return request.protocol
   if (columnKey === 'contentType') return requestsStore.formatContentType(request.contentType)
   return ''
 }
@@ -187,6 +190,8 @@ const getCellValue = (columnKey, request) => {
       return request.statusCode || '-'
     case 'method':
       return request.method
+    case 'protocol':
+      return request.protocol || '-'
     case 'contentType':
       return requestsStore.formatContentType(request.contentType)
     case 'startTime':
@@ -322,6 +327,12 @@ const getCellValue = (columnKey, request) => {
   font-weight: 600;
   text-transform: uppercase;
   min-width: 60px;
+}
+
+.protocol-cell {
+  color: var(--color-foreground-secondary);
+  font-size: var(--font-size-small);
+  min-width: 75px;
 }
 
 .status-cell {

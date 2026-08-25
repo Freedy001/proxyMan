@@ -148,6 +148,8 @@
                   :request-body="requestDetailsManager.getRequestBody().value"
                   :response-body="requestDetailsManager.getResponseBody().value"
                   :url="requestsStore.selectedRequest?.url || ''"
+                  :start-time="requestsStore.selectedRequest?.startTime"
+                  :end-time="requestsStore.selectedRequest?.endTime"
                   :finished="requestDetailsManager.getRequestState().value>=3"
                   :aiProvider="aiProvider"
               />
@@ -242,6 +244,11 @@ const getSummaryData = () => {
     {
       name: 'Host',
       value: request.host || 'N/A',
+      valueClass: 'value-monospace'
+    },
+    {
+      name: 'Protocol',
+      value: request.protocol || 'N/A',
       valueClass: 'value-monospace'
     },
     {

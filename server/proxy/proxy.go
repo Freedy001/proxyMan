@@ -20,6 +20,7 @@ import (
 
 	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/zstd"
+	"golang.org/x/net/http2"
 )
 
 // 定义一个包装类型，它将 bufio.Reader 和 net.Conn 结合起来。
@@ -41,11 +42,59 @@ func HandleHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodConnect {
 		handleConnect(w, r)
 	} else {
-		handlePlainHTTP(w, r)
+		proxyRequest(r, "http", &responseWriterClient{w: w})
 	}
 }
 
-func handlePlainHTTP(w io.Writer, r *http.Request) {
+type downstreamClient interface {
+	WriteResponse(resp *http.Response, proxy *DataProxy) error
+	WriteBadGateway()
+}
+
+type responseWriterClient struct {
+	w http.ResponseWriter
+}
+
+func (c *responseWriterClient) WriteResponse(resp *http.Response, proxy *DataProxy) error {
+	copyResponseHeaders(c.w.Header(), resp.Header)
+	c.w.WriteHeader(resp.StatusCode)
+
+	copyStream(resp.Body, c.w, proxy, common.ResponseBody, resp.Header)
+	return nil
+}
+
+func (c *responseWriterClient) WriteBadGateway() {
+	http.Error(c.w, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
+}
+
+type rawHTTPClient struct {
+	w io.Writer
+}
+
+func (c *rawHTTPClient) WriteResponse(resp *http.Response, proxy *DataProxy) error {
+	pr, pw := io.Pipe()
+	remoteBodyReader := resp.Body
+	resp.Body = pr
+	go copyStream(remoteBodyReader, pw, proxy, common.ResponseBody, resp.Header)
+
+	resp.Proto = "HTTP/1.1"
+	resp.ProtoMajor = 1
+	resp.ProtoMinor = 1
+	return resp.Write(c.w)
+}
+
+func (c *rawHTTPClient) WriteBadGateway() {
+	_ = (&http.Response{
+		StatusCode: http.StatusBadGateway,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(http.NoBody),
+		Proto:      "HTTP/1.1",
+		ProtoMajor: 1,
+		ProtoMinor: 1,
+	}).Write(c.w)
+}
+
+func proxyRequest(r *http.Request, scheme string, downstream downstreamClient) {
 	// 创建DataProxy实例来跟踪这个请求
 	proxy := NewDataProxy()
 	// 报告请求信息
@@ -60,46 +109,33 @@ func handlePlainHTTP(w io.Writer, r *http.Request) {
 	// 清除RequestURI字段，避免客户端请求错误
 	// Go HTTP客户端不允许设置RequestURI，这是服务器端专用字段
 	r.RequestURI = ""
-	r.URL.Scheme = "http"
+	r.URL.Scheme = scheme
 	r.URL.Host = r.Host
 
 	// 转发请求到目标服务器
 	client := &http.Client{
 		Transport: &http.Transport{
-			Proxy: buildProxyFunc(),
+			Proxy:             buildProxyFunc(),
+			ForceAttemptHTTP2: true,
 		},
 	}
 
 	targetResp, err := client.Do(r)
 	if err != nil {
 		proxy.reportError(err)
-		_ = (&http.Response{
-			StatusCode: http.StatusBadGateway,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(http.NoBody),
-			Proto:      "HTTP/1.1",
-			ProtoMajor: 1,
-			ProtoMinor: 1,
-		}).Write(w)
+		downstream.WriteBadGateway()
 		return
 	}
 
 	defer targetResp.Body.Close()
 	proxy.reportResponse(targetResp)
 
-	// 代理响应
-	pr, pw = io.Pipe()
-	remoteBodyReader := targetResp.Body
-	targetResp.Body = pr
-	go copyStream(remoteBodyReader, pw, proxy, common.ResponseBody, targetResp.Header)
-
-	err = targetResp.Write(w)
-	if err != nil {
+	if err = downstream.WriteResponse(targetResp, proxy); err != nil {
 		proxy.reportError(err)
 		return
 	}
 
-	log.Printf("Completed HTTPS request: (ID: %d, Duration: %dms)", proxy.Id(), proxy.Duration())
+	log.Printf("Completed %s request: (ID: %d, Duration: %dms)", scheme, proxy.Id(), proxy.Duration())
 }
 
 // handleConnect handles HTTPS CONNECT requests for MITM.
@@ -139,7 +175,7 @@ func handleConnect(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Failed to read HTTP request from %s: %s", r.Host, err)
 			return
 		}
-		handlePlainHTTP(clientConn, clientReq)
+		proxyRequest(clientReq, "http", &rawHTTPClient{w: clientConn})
 		return
 	}
 
@@ -152,7 +188,10 @@ func handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tlsConn := tls.Server(bufferedConn{r: bufReader, Conn: clientConn}, &tls.Config{Certificates: []tls.Certificate{*tlsCert}})
+	tlsConn := tls.Server(bufferedConn{r: bufReader, Conn: clientConn}, &tls.Config{
+		Certificates: []tls.Certificate{*tlsCert},
+		NextProtos:   []string{"h2", "http/1.1"},
+	})
 	if err := tlsConn.Handshake(); err != nil {
 		log.Printf("TLS handshake error with %s: %s", r.Host, err)
 		_ = tlsConn.Close()
@@ -160,66 +199,51 @@ func handleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tlsConn.Close()
 
+	if tlsConn.ConnectionState().NegotiatedProtocol == "h2" {
+		log.Printf("Protocol Negotiation: Detected HTTP/2 for %s", r.Host)
+		h2Server := &http2.Server{}
+		h2Server.ServeConn(tlsConn, &http2.ServeConnOpts{
+			Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				proxyRequest(req, "https", &responseWriterClient{w: w})
+			}),
+		})
+		return
+	}
+
 	clientReq, err := http.ReadRequest(bufio.NewReader(tlsConn))
 	if err != nil {
 		return
 	}
 	defer clientReq.Body.Close()
-
-	proxy := NewDataProxy()
-	proxy.reportRequest(clientReq)
-
-	//代理请求流
-	pr, pw := io.Pipe()
-	bodyReader := clientReq.Body
-	clientReq.Body = pr
-	go copyStream(bodyReader, pw, proxy, common.RequestBody, clientReq.Header)
-
-	// 清除RequestURI字段，避免客户端请求错误
-	// Go HTTP客户端不允许设置RequestURI，这是服务器端专用字段
-	clientReq.RequestURI = ""
-	clientReq.URL.Scheme = "https"
-	clientReq.URL.Host = clientReq.Host
-
-	client := &http.Client{
-		Transport: &http.Transport{
-			Proxy: buildProxyFunc(),
-		},
-	}
-
-	targetResp, err := client.Do(clientReq)
-	if err != nil {
-		proxy.reportError(err)
-		writeErrorMsg(tlsConn)
-		return
-	}
-	defer targetResp.Body.Close()
-	proxy.reportResponse(targetResp)
-
-	//代理响应
-	pr, pw = io.Pipe()
-	remoteBodyReader := targetResp.Body
-	targetResp.Body = pr
-	go copyStream(remoteBodyReader, pw, proxy, common.ResponseBody, targetResp.Header)
-
-	err = targetResp.Write(tlsConn)
-	if err != nil {
-		proxy.reportError(err)
-		return
-	}
-
-	log.Printf("Completed HTTPS request: (ID: %d, Duration: %dms)", proxy.Id(), proxy.Duration())
+	var w2 io.Writer = tlsConn
+	proxyRequest(clientReq, "https", &rawHTTPClient{w: w2})
 }
 
-func writeErrorMsg(tlsConn *tls.Conn) {
-	_ = (&http.Response{
-		StatusCode: http.StatusBadGateway,
-		Header:     make(http.Header),
-		Body:       io.NopCloser(http.NoBody),
-		Proto:      "HTTP/1.1",
-		ProtoMajor: 1,
-		ProtoMinor: 1,
-	}).Write(tlsConn)
+func copyResponseHeaders(dst, src http.Header) {
+	for key, values := range src {
+		if isHopByHopHeader(key) {
+			continue
+		}
+		for _, value := range values {
+			dst.Add(key, value)
+		}
+	}
+}
+
+func isHopByHopHeader(key string) bool {
+	switch http.CanonicalHeaderKey(key) {
+	case "Connection",
+		"Keep-Alive",
+		"Proxy-Authenticate",
+		"Proxy-Authorization",
+		"Te",
+		"Trailer",
+		"Transfer-Encoding",
+		"Upgrade":
+		return true
+	default:
+		return false
+	}
 }
 
 func copyStream(src io.Reader, dst io.Writer, proxy *DataProxy, dataType common.DataType, header http.Header) {
@@ -291,7 +315,11 @@ func copyStream(src io.Reader, dst io.Writer, proxy *DataProxy, dataType common.
 	// and the pipe writer (pw) for the reporting goroutine.
 	// We must close the pipe writer when the copy is done to signal EOF to the reader side.
 	writer := io.MultiWriter(dst, pw)
-	_, _ = io.Copy(writer, src)
+	_, err := io.Copy(writer, src)
+	if err != nil {
+		log.Printf("Error copying stream: %v", err)
+		proxy.reportError(err)
+	}
 	_ = pw.Close()
 }
 
